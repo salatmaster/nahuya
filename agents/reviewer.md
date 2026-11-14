@@ -16,6 +16,11 @@ The task message gives you:
 - `mode`: `review` or `judge`.
 - `round`: 1 or later.
 - `depth`: `normal` or `deep` (see below).
+- `tests`: `dedupe` (default) or `prune`. It decides which test findings you
+  may make (see `test-redundancy` and `worthless-test`).
+- `only_tests`: `yes` for a tests-only run. Review only test code: test files
+  and inline test modules. Read production code to judge what a test covers,
+  but don't report findings in it. Every category applies to the test code.
 - `diff`: path to a unified diff. Read it first. Only code it adds or modifies is
   in scope; pre-existing code matters only when the diff duplicates it. If the
   file is missing or empty, say so in `summary` and stop.
@@ -96,6 +101,23 @@ Flag added complexity that has no current justification:
   branches, per-caller checks) that one general rule in the right place would
   replace; a rule every caller checks for itself that belongs inside the
   function they call.
+- `worthless-test`: only when `tests` is `prune`, except as noted below. This
+  is a test that would pass no matter how the project's code is broken:
+  - it has no assertion, or one that can't fail;
+  - it checks what a mock was set up to return, or tests the framework or
+    standard library rather than project code;
+  - it restates the type system (a constructor stores its fields, a getter
+    returns its field, a DTO survives a round trip);
+  - it tests code that no longer exists;
+  - it is disabled for good (`@Ignore`, `skip`, `xit`) with no reason given.
+
+  Prove it like a mutation test: name the code the test targets, then argue
+  that no plausible bug in that code would make the test fail. If a plausible
+  bug would make only this test fail, keep it. Never flag regression tests tied
+  to a bug (an issue number or bug note in the name or a comment), tests of
+  money, security or data integrity, or the last test of a behavior. A flaky
+  test is a bug, not waste, so report it as `needs-context`. In a diff review,
+  flag only tests the diff adds that can't fail, whatever `tests` says.
 - `test-redundancy`: tests that assert the same behavior as another test, setup
   copied across tests that a fixture or helper would share, scenarios fully
   covered elsewhere. Name the test that keeps the coverage; never remove the last
@@ -127,7 +149,7 @@ Leave these alone even when they are heavier than needed:
 - public API compatibility (deprecated aliases, shims, versioned endpoints);
 - logging, metrics and tracing, unless clearly excessive;
 - accessibility;
-- tests, except as `test-redundancy` above.
+- tests, except as `test-redundancy` and `worthless-test` above.
 
 ## Proving absence
 

@@ -168,6 +168,10 @@ eq "run records size at loop start" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 
 eq "after loop push passes" "$(hook 'git push -u origin feat' "$R")" 0
 git push -q -u origin feat 2>/dev/null
 sh "$NAHUYA" diff --target | grep -q '^note=nothing unreviewed' && ok || bad "review falls back to last commit"
+lines src/f9.py 20; lines tests/test_f9.py 20; commit f9
+d=$(sh "$NAHUYA" diff --target --only-tests HEAD~1..HEAD | sed -n 's/^diff=//p')
+grep -q 'tests/test_f9.py' "$d" && ok || bad "test-only diff keeps tests"
+grep -q 'src/f9.py' "$d" && bad "test-only diff kept production code" || ok
 
 sh "$NAHUYA" diff --target src/a.py >/dev/null 2>&1 && bad "path accepted by diff --target" || ok
 
@@ -234,13 +238,30 @@ sh "$NAHUYA" shards all --with-nonprod | grep -q '^lines=2390$' && ok || bad "wi
 lines tests/test_x.py 120; commit t
 sh "$NAHUYA" shards all | grep -q '^test_lines=120 in 1 files' && ok || bad "test lines reported"
 sh "$NAHUYA" shards all --no-tests | grep -q '^lines=2090$' && ok || bad "no-tests"
+sh "$NAHUYA" shards all --no-tests | grep -q '^test_mode=off$' && ok || bad "test mode off"
+sh "$NAHUYA" shards all --prune-tests | grep -q '^test_mode=prune$' && ok || bad "test mode prune"
+printf 'fn add(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() { assert_eq!(super::add(1, 2), 3); }\n}\n' > lib/calc.rs; commit rust
+out=$(sh "$NAHUYA" shards all --only-tests)
+printf '%s\n' "$out" | grep -q '^scope=tests-only' && ok || bad "only-tests scope: $out"
+grep -q 'tests/test_x.py' .git/nahuya/shards/all/*.txt && ok || bad "only-tests keeps test files"
+grep -q 'lib/calc.rs' .git/nahuya/shards/all/*.txt && ok || bad "only-tests keeps inline rust tests"
+grep -q 'lib/a.py' .git/nahuya/shards/all/*.txt && bad "only-tests kept production code" || ok
+sh "$NAHUYA" shards all --only-tests --no-tests >/dev/null 2>&1 && bad "contradictory test flags accepted" || ok
 sh "$NAHUYA" shards all --no-tests --max-lines 850 >/dev/null
 grep -l 'lib/a.py' .git/nahuya/shards/all/*.txt | xargs grep -q 'lib/b.py' && ok || bad "module kept together"
 awk 'BEGIN { for (i = 1; i <= 12; i++) printf "total = total + value_%d * weight\n", i }' > lib/dup1.py
 cp lib/dup1.py web/dup2.py; commit dup
+rm -f .git/nahuya/shards/all/shard-*.txt
 out=$(sh "$NAHUYA" clones all --no-tests)
 [ "$(printf '%s\n' "$out" | sed -n 's/^pairs=//p')" -ge 1 ] && ok || bad "clone pairs: $out"
 grep -q 'lib/dup1.py:1-12  <->  web/dup2.py:1-12' .git/nahuya/shards/all/clones.txt && ok || bad "clone ranges: $(cat .git/nahuya/shards/all/clones.txt)"
+printf '## lib only\nlib/\n## skip: rest\nweb/\nx.py\nresearch/\ntests/\nCargo.toml\n' > plan2.md
+sh "$NAHUYA" shards all --plan plan2.md >/dev/null
+sh "$NAHUYA" clones all | grep -q '(from the last shards' && ok || bad "clones reuse shards"
+grep -q 'web/dup2.py' .git/nahuya/shards/all/clones.txt && bad "clones ignored the plan" || ok
+mkdir -p data; awk 'BEGIN { for (i = 1; i <= 12; i++) printf "{\"k%d\": %d},\n", i, i }' > data/a.json; cp data/a.json data/b.json; commit json
+rm -f .git/nahuya/shards/all/shard-*.txt
+sh "$NAHUYA" clones all >/dev/null; grep -q 'data/a.json' .git/nahuya/shards/all/clones.txt && bad "json in clones" || ok
 # inventory and plans
 out=$(sh "$NAHUYA" inventory all --no-tests)
 printf '%s\n' "$out" | grep -q '^lib/  files=' && ok || bad "inventory dirs: $out"
@@ -257,6 +278,13 @@ printf '%s\n' "$out" | grep -q '^planned_skip=skip: scratch (900 lines' && ok ||
 printf '%s\n' "$out" | grep -q '^unassigned=' && ok || bad "unassigned reported"
 sh "$NAHUYA" shards all --plan plan.md --fit 2 >/dev/null 2>&1 && bad "fit with plan accepted" || ok
 cd "$R" || exit 1
+
+# aliases
+T=$WORK/cfg; CLAUDE_CONFIG_DIR=$T sh "$NAHUYA" aliases >/dev/null
+[ -f "$T/skills/nah-polish/SKILL.md" ] && grep -q 'nahuya:polish' "$T/skills/nah-polish/SKILL.md" && ok || bad "alias installed"
+mkdir -p "$T/skills/nah-mine"; echo mine > "$T/skills/nah-mine/SKILL.md"
+CLAUDE_CONFIG_DIR=$T sh "$NAHUYA" aliases remove >/dev/null
+[ ! -d "$T/skills/nah-polish" ] && [ -f "$T/skills/nah-mine/SKILL.md" ] && ok || bad "alias remove touched only ours"
 
 # session start layer
 eq "layer on" "$(echo '{}' | sh "$ROOT/hooks/session-start.sh" | head -c 8)" "(nahuya)"

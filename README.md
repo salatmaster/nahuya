@@ -174,13 +174,21 @@ You can also run it by hand at any time, including on your whole codebase:
 /nahuya:review main..HEAD       # a range
 /nahuya:review all              # the whole codebase, report only
 /nahuya:polish src/billing/     # review and fix existing code in a folder
+/nahuya:polish tests all        # only the tests, across the whole repo
 ```
+
+Put `tests` first to work on test code only. It combines with every target: `tests` alone covers the tests in your unpushed changes, and `tests all`, `tests src/` or `tests main..HEAD` work as usual. Test files are found by path. Rust sources with inline `#[cfg(test)]` modules count as well.
 
 For the whole codebase or a folder, nahuya plans the run before spending anything:
 
 - **Logical components, not line counts.** `nahuya inventory` builds a cheap map of directories, sizes, tests and build manifests. Claude groups the code by what it does: a feature, a service, a layer. Related code from different folders lands with the same reviewer, which is where duplicates show up. Each component is about 3000 lines (`shard-lines`) and gets its own fresh reviewer. Small targets skip planning. In short, the model plans and shell scripts do the counting.
 - **Only code that ships.** Docs, generated and vendored files are skipped, and so are folders such as `research/`, `examples/`, `benchmarks/`, `fixtures/` and `playground/`. Claude tells you what it skipped, and `--with-nonprod` brings those folders back in.
-- **Tests are your call.** Claude asks whether to include them. If you say yes, redundant tests and copied setup get cleaned up too.
+- **Tests are your call.** Claude asks what to do with them:
+  - leave them alone;
+  - clean up duplicates and copy-pasted setup;
+  - also remove worthless tests.
+
+  A test counts as worthless if it passes no matter how the code breaks: it has no real assertion, checks only what a mock returns, restates the type system, or has been disabled for good. Each removal needs a mutation-style argument: no plausible bug in the target code would make that test fail. Regression, money, security and data tests stay, and so does the last test of any behavior.
 - **A duplicates pass.** A cheap clone detector scans the whole target for near-identical code across files. One more reviewer then reads both sides of each pair. This catches what a per-shard review can't see, such as two modules built on the same skeleton.
 - **A budget.** By default a run uses at most 10 reviewer subagents (`max-agents`). If it needs more, Claude asks first and shows the numbers for each option:
   - review the most suspicious components now and the rest as a later batch (`--skip N`);
@@ -207,10 +215,10 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 
 | Command | What it does |
 |---|---|
-| `/nahuya:review [all\|folder\|base..tip]` | Report-only review. Changes nothing. With no argument it reviews your unpushed changes; `all` reviews the whole codebase. |
-| `/nahuya:polish [all\|folder\|base..tip]` | Review-and-fix loop. With no argument it covers the commits waiting to be pushed (the gate sends Claude here). With `all` or a folder, it fixes existing code and commits, but never pushes. |
+| `/nahuya:review [tests] [all\|folder\|base..tip]` | Report-only review. Changes nothing. With no argument it reviews your unpushed changes; `all` reviews the whole codebase. |
+| `/nahuya:polish [tests] [all\|folder\|base..tip]` | Review-and-fix loop. With no argument it covers the commits waiting to be pushed (the gate sends Claude here). With `all` or a folder, it fixes existing code and commits, but never pushes. |
 | `/nahuya:skip` | Let the next push of the current commit through unreviewed. Claude can't invoke this skill and is told not to bypass the gate. |
-| `/nahuya:config [key value] [--global]` | Show or change settings. |
+| `/nahuya:aliases [install\|remove]` | Add short commands `/nah-review`, `/nah-polish`, `/nah-skip` and `/nah-stats`. They go in `~/.claude/skills`, because plugin commands always carry the `nahuya:` prefix. `remove` deletes only these files. |
 | `nahuya stats` | Applied and rejected findings by category and diff size, from your own history. Run it in a terminal from the plugin's `bin/`, or ask Claude to run it. |
 
 ## Configuration
@@ -220,17 +228,22 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 | `gate` | `on` | `on` / `off` |
 | `threshold` | `500` | unreviewed added lines that trigger the loop |
 | `max-rounds` | `3` | review rounds per loop |
-| `model` | `inherit` | `inherit` / `opus` / `fable` / `sonnet` / `haiku`: the reviewer subagent's model |
+| `reviewer-model` | `inherit` | `inherit` / `opus` / `fable` / `sonnet` / `haiku`: the reviewer subagent's model |
 | `fix-mode` | `commit` | `commit`: new commit · `amend`: only if HEAD isn't pushed · `uncommitted`: leave fixes for you |
 | `layer` | `on` | `on` / `off` |
 | `shard-lines` | `3000` | lines of code per reviewer in whole-repo and folder runs |
 | `max-agents` | `10` | reviewer subagents per whole-repo or folder run before Claude asks you |
 | `depth` | `auto` | `auto`: `deep` for whole-repo and folder cleanups, `normal` before pushes · `normal` · `deep` |
 
+Change settings in `/plugin configure`. To override a setting for one repo, use git config in a terminal:
+
 ```
-/nahuya:config threshold 1000            # this repo
-/nahuya:config model fable --global      # every repo
+git config nahuya.threshold 1000                 # this repo
+git config --global nahuya.reviewer-model fable  # every repo
+git config --unset nahuya.threshold              # back to the plugin setting
 ```
+
+To see every effective value and where it came from, ask Claude to run `nahuya config`.
 
 nahuya reads each setting from these sources, in this order:
 1. environment variables `NAHUYA_<SETTING>` (for example, `NAHUYA_GATE=0` in CI);
@@ -295,7 +308,7 @@ Yes. Before a push, it removes them from the code being pushed, and on demand fr
 - dependencies added for a few lines;
 - logic duplicated across files, and boilerplate that a helper would fold;
 - comments that restate the code, and stale TODOs;
-- redundant tests and copied test setup, when you include tests.
+- redundant tests and copied test setup, and, if you ask, worthless tests that can't fail;
 
 To clean up existing code, run `/nahuya:polish all` or `/nahuya:polish src/`.
 
@@ -373,7 +386,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 114 tests; needs only sh, git and awk
+sh tests/run.sh                     # 128 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

@@ -1,12 +1,20 @@
 ---
 name: review
 description: Report-only review for over-engineering and bloat of a change, a range, a folder or the whole repo. Use when the user asks whether code is over-engineered, bloated or more complex than needed.
-argument-hint: "[all | folder | base..tip]  default: your unpushed changes"
+argument-hint: "[tests] [all | folder | base..tip]  default: your unpushed changes"
 allowed-tools: Bash(nahuya *)
 ---
 
 The target is: $ARGUMENTS (empty means the unreviewed commits plus uncommitted
 changes).
+
+**Tests only.** If the first argument is `tests` (`tests`, `tests all`,
+`tests src/`, `tests main..HEAD`), drop it and review test code only:
+- add `--only-tests` to every `nahuya diff`, `inventory`, `shards` and `clones`
+  command;
+- give every reviewer `only_tests: yes`;
+- ask only whether to look for duplicates (`--tests`) or also for worthless
+  tests (`--prune-tests`), unless the arguments already say.
 
 **Range, branch or empty:** run `nahuya diff --target <target>`, which prints a
 diff path. If it prints `note=`, pass the note on to the user. Launch one fresh
@@ -44,9 +52,14 @@ the user said what the code is for.
    `nahuya shards <target> --plan <plan> <flags>` and fix the plan until it
    reports no `unassigned` lines.
 3. **Ask once, only what is open.** Put the open questions in one message:
-   - **Tests:** unless the arguments say `--tests` or `--no-tests` and the
-     inventory shows tests, ask whether to include them. They get the same
-     cleanup, including redundant tests and copied setup.
+   - **Tests:** unless the arguments say `--no-tests`, `--tests` or
+     `--prune-tests`, and the inventory shows tests, ask how to treat them:
+     - **leave them alone** (`--no-tests`);
+     - **clean duplicates and copy-pasted setup** (`--tests`);
+     - **also remove worthless tests** (`--prune-tests`). These are tests that
+       pass no matter how the code breaks: no real assertion, checking a mock,
+       restating the type system, or disabled for good. Regression, money,
+       security and data tests, and the last test of a behavior, always stay.
    - **Budget:** count the reviewers: one per component plus one for the duplicates pass. If that exceeds
      `max_agents` and the arguments have no `--top` or `--skip`, offer:
      - **most suspicious first:** `--top <budget>`, the rest later with
@@ -61,7 +74,8 @@ the user said what the code is for.
 
    Then run the final `nahuya shards` command with the choices.
 4. Launch a fresh `nahuya:reviewer` per selected shard with `mode: review`,
-   `round: 1`, `depth`, `files: <shard path>` and `ledger: none`, up to four at
+   `round: 1`, `depth`, `tests` (`prune` if `shards` printed `test_mode=prune`,
+   otherwise `dedupe`), `files: <shard path>` and `ledger: none`, up to four at
    a time.
 5. In `deep`, also run `nahuya clones <same target and test flag>`. If `pairs`
    is above 0, launch one more reviewer with `clones: <path>`.

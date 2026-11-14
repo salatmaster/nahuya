@@ -322,11 +322,20 @@ nh_keep() {
   _ex=$(nh_user_excludes)
   _attr=$(printf '%s\n' "$_paths" | git check-attr --stdin linguist-generated linguist-vendored 2>/dev/null |
     awk -F': ' '$3 == "set" || $3 == "true" { print $1 }')
+  _inline=
+  if [ "$1" = review ] && [ -n "${NH_ONLY_TESTS-}" ]; then
+    # tests-only runs: test files by path, plus sources holding inline tests (Rust)
+    _inline=$(cd "${NH_TOP:-.}" && printf '%s\n' "$_paths" | tr '\n' '\000' |
+      xargs -0 git grep -l -E '#\[(cfg\(test\)|test)\]' -- 2>/dev/null)
+  fi
   printf '%s\n' "$_paths" | while IFS= read -r _p; do
     [ -n "$_p" ] || continue
     nh_builtin_excluded "$_p" && continue
     if [ "$1" = count ] && nh_is_test "$_p"; then continue; fi
     nh_match_any "$_p" "$_ex" && continue
+    if [ "$1" = review ] && [ -n "${NH_ONLY_TESTS-}" ] && ! nh_is_test "$_p"; then
+      printf '%s\n' "$_inline" | grep -Fxq -- "$_p" || continue
+    fi
     printf '%s\n' "$_p"
   done | NH_ATTR=$_attr awk 'BEGIN { n = split(ENVIRON["NH_ATTR"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($0 in skip)'
 }

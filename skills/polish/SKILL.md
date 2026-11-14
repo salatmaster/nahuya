@@ -1,7 +1,7 @@
 ---
 name: polish
 description: Review-and-fix loop that removes over-engineering and bloat from unpushed commits, or from existing code under a path. Use when the nahuya push gate blocks a push or the user asks to de-bloat a branch or a codebase.
-argument-hint: "[all | folder | base..tip]  default: commits waiting to be pushed"
+argument-hint: "[tests] [all | folder | base..tip]  default: commits waiting to be pushed"
 allowed-tools: Bash(nahuya *)
 ---
 
@@ -15,6 +15,20 @@ needs your own evidence.
 
 If the argument is `all` (the whole repo) or a folder rather than a range,
 follow **Existing code** at the end instead of Setup and Rounds.
+
+**Tests only.** If the first argument is `tests` (`tests`, `tests all`,
+`tests src/`, `tests main..HEAD`), drop it and run the same flow on test code
+only:
+- add `--only-tests` to every `nahuya diff`, `inventory`, `shards` and `clones`
+  command;
+- give every reviewer `only_tests: yes`;
+- ask only whether to clean duplicates (`--tests`) or also remove worthless
+  tests (`--prune-tests`), unless the arguments already say;
+- with no further argument, cover the tests in the commits waiting to be
+  pushed. Skip the "nothing to polish" stop in Setup step 2; stop only if
+  round 1's diff has no files;
+- finish with `nahuya mark --keep-anchor`, since production code wasn't
+  reviewed, and push only if the user asked.
 
 ## Setup
 
@@ -137,9 +151,14 @@ is `deep` unless the `depth` setting is `normal`.
    `nahuya shards <target> --plan <plan> <flags>` and fix the plan until it
    reports no `unassigned` lines.
 3. **Ask once, only what is open.** Put the open questions in one message:
-   - **Tests:** unless the arguments say `--tests` or `--no-tests` and the
-     inventory shows tests, ask whether to include them. They get the same
-     cleanup, including redundant tests and copied setup.
+   - **Tests:** unless the arguments say `--no-tests`, `--tests` or
+     `--prune-tests`, and the inventory shows tests, ask how to treat them:
+     - **leave them alone** (`--no-tests`);
+     - **clean duplicates and copy-pasted setup** (`--tests`);
+     - **also remove worthless tests** (`--prune-tests`). These are tests that
+       pass no matter how the code breaks: no real assertion, checking a mock,
+       restating the type system, or disabled for good. Regression, money,
+       security and data tests, and the last test of a behavior, always stay.
    - **Budget:** count the reviewers: one per component, one for the duplicates pass in `deep`, and two kept for round 2 and a possible judge. If that exceeds
      `max_agents` and the arguments have no `--top` or `--skip`, offer:
      - **most suspicious first:** `--top <budget>`, the rest later with
@@ -158,8 +177,9 @@ is `deep` unless the `depth` setting is `normal`.
    `requested` is the user's words for this run. Note the current HEAD as the
    run's start.
 5. **Shards.** Go shard by shard. For each, launch a fresh `nahuya:reviewer`
-   with `mode: review`, `round: 1`, `depth`, `files: <shard path>`, the ledger
-   path and `requested`. You may launch the next shard's reviewer while you
+   with `mode: review`, `round: 1`, `depth`, `tests` (`prune` if `shards`
+   printed `test_mode=prune`, otherwise `dedupe`), `files: <shard path>`, the
+   ledger path and `requested`. You may launch the next shard's reviewer while you
    verify the current one. Verify, apply, log and run the judge exactly as in
    Rounds steps 3–5. Log with round `1`. After each shard, run the check and,
    with fix_mode `commit`, commit that shard's edits. A change that spans

@@ -8,9 +8,9 @@ NH_ROOT=$(cd "$(dirname "$0")/.." && pwd) || exit 1
 usage() {
   cat <<'EOF'
 nahuya status [base..tip]                           range, settings and loop context
-nahuya diff --round K [--full] [base..tip]          write the diff for review round K
+nahuya diff --round K [--full] [--only-tests] [base..tip]  write the diff for review round K
 nahuya diff --target [range|branch]                 write a diff for a one-off review
-nahuya shards [all|PATH] [--top N|--skip K|--fit N|--max-lines N] [--no-tests]
+nahuya shards [all|PATH] [--top N|--skip K|--fit N|--max-lines N] [--no-tests|--prune-tests|--only-tests]
               [--with-nonprod] [--loop]             split existing code into ranked review shards
 nahuya inventory [all|PATH] [--files DIR] [--no-tests] [--with-nonprod]
                                                     map of directories for planning components
@@ -21,6 +21,7 @@ nahuya mark [--keep-anchor]                         mark HEAD as reviewed (ends 
 nahuya skip                                         let the next push of HEAD skip the gate
 nahuya config [KEY [VALUE|--unset] [--global]]      show or change settings
 nahuya stats                                        what past reviews applied and rejected
+nahuya aliases [install|remove]                     short /nah-review, /nah-polish, ... commands
 EOF
 }
 
@@ -83,9 +84,10 @@ cmd_diff() {
   while [ $# -gt 0 ]; do
     case $1 in
       --round) _round=${2-}; shift 2 || shift ;;
+      --only-tests) export NH_ONLY_TESTS=1; shift ;;
       --full) _full=1; shift ;;
-      --target) _has_target=1; shift; [ $# -gt 0 ] && { _target=$1; shift; } ;;
-      *) _range=$1; shift ;;
+      --target) _has_target=1; shift ;;
+      *) if [ -n "$_has_target" ]; then _target=$1; else _range=$1; fi; shift ;;
     esac
   done
   require_repo
@@ -115,6 +117,7 @@ cmd_diff() {
   echo "diff=$_out"
   echo "files=$_n"
   echo "lines=$(wc -l < "$_out" | tr -d ' ')"
+  [ -z "${NH_ONLY_TESTS-}" ] || echo "scope=tests-only"
 }
 
 diff_target() {
@@ -160,7 +163,12 @@ select_files() {
     SEL_SKIPPED=$(printf '%s\n' "$_all" | grep -E "$NH_NONPROD_RE")
     _all=$(printf '%s\n' "$_all" | grep -v -E "$NH_NONPROD_RE")
   fi
-  SEL_TESTS=$(printf '%s\n' "$_all" | while IFS= read -r _f; do [ -n "$_f" ] && nh_is_test "$_f" && printf '%s\n' "$_f"; done)
+  if [ -n "${NH_ONLY_TESTS-}" ]; then
+    [ -z "$_notests" ] || nh_die "--only-tests and --no-tests contradict each other"
+    SEL_TESTS=$_all
+  else
+    SEL_TESTS=$(printf '%s\n' "$_all" | while IFS= read -r _f; do [ -n "$_f" ] && nh_is_test "$_f" && printf '%s\n' "$_f"; done)
+  fi
   if [ -n "$_notests" ] && [ -n "$SEL_TESTS" ]; then
     _all=$(printf '%s\n' "$_all" | NH_T=$SEL_TESTS awk 'BEGIN { n = split(ENVIRON["NH_T"], t, "\n"); for (i = 1; i <= n; i++) skip[t[i]] = 1 } !($0 in skip)')
   fi
@@ -180,7 +188,7 @@ count_lines() {
 # shards until everything fits in N. With --loop, also start a polish session.
 NH_SIGNALS='abstract[[:space:]]+class|@abstractmethod|ABC[),:]|Protocol[),:]|interface[[:space:]]+[A-Z]|implements[[:space:]]|Factory|Strategy|Builder|Manager([^A-Za-z0-9_]|$)|Registry|Provider([^A-Za-z0-9_]|$)|Adapter([^A-Za-z0-9_]|$)|Wrapper([^A-Za-z0-9_]|$)|Base[A-Z]|TypeVar|Generic\[|<[A-Z][A-Za-z]*( extends [^>]*)?>|\*\*kwargs|Options([^A-Za-z0-9_]|$)|plugin|register\('
 cmd_shards() {
-  _max=; _loop=; _path=; _top=0; _skip=0; _fit=0; _notests=; _nonprod=; _plan=
+  _max=; _loop=; _path=; _top=0; _skip=0; _fit=0; _notests=; _nonprod=; _plan=; _prune=
   while [ $# -gt 0 ]; do
     case $1 in
       --plan) _plan=${2-}; shift 2 || shift ;;
@@ -191,6 +199,8 @@ cmd_shards() {
       --loop) _loop=1; shift ;;
       --no-tests) _notests=1; shift ;;
       --tests) _notests=; shift ;;
+      --prune-tests) _notests=; _prune=1; shift ;;
+      --only-tests) export NH_ONLY_TESTS=1; shift ;;
       --with-nonprod) _nonprod=1; shift ;;
       *) _path=$1; shift ;;
     esac
@@ -214,7 +224,7 @@ cmd_shards() {
     END { for (k in s) printf "%s %d\n", k, s[k] }' | sort -k2,2nr | head -8)
   _planned=; [ -z "$_plan" ] || _planned=$(tr -d '\r' < "$_plan")
   printf '%s\n' "$SEL_FILES" | count_lines | NH_SIG=$_signals NH_TESTS=$SEL_TESTS NH_PLAN=$_planned awk -F'\t' -v max="$_max" -v dir="$_dir" \
-    -v top="$_top" -v skip="$_skip" -v fit="$_fit" -v agents="$(nh_cfg max_agents)" -v notests="$_notests" '
+    -v top="$_top" -v skip="$_skip" -v fit="$_fit" -v agents="$(nh_cfg max_agents)" -v notests="$_notests" -v prune="$_prune" '
     BEGIN {
       m = split(ENVIRON["NH_SIG"], g, "\n")
       for (i = 1; i <= m; i++) { p = g[i]; c = p; sub(/:[0-9]+$/, "", p); sub(/.*:/, "", c); sig[p] = c + 0 }
@@ -297,8 +307,9 @@ cmd_shards() {
         if (ne > 0 && lines[s] > 2 * max) printf "warning=component \"%s\" has %d lines, over twice shard-lines (%d); consider splitting it\n", label[s], lines[s], max
       }
       printf "files=%d\nlines=%d\n", nf, total
-      if (notests) printf "test_lines=excluded (--no-tests)\n"
-      else printf "test_lines=%d in %d files (included; pass --no-tests to leave them out)\n", tl, tf
+      if (notests) printf "test_lines=excluded (--no-tests)\ntest_mode=off\n"
+      else printf "test_lines=%d in %d files (included; pass --no-tests to leave them out)\ntest_mode=%s\n", tl, tf, (prune ? "prune" : "dedupe")
+      if (ENVIRON["NH_ONLY_TESTS"] != "") printf "scope=tests-only (test files, plus sources with inline tests)\n"
       printf "shard_lines=%d\nshards_total=%d\nshards_selected=%d\nselected_lines=%d\n", max, k, sel, sl
       if (last < k) printf "remaining=%d (next batch: --skip %d)\n", k - last, last
       printf "max_agents=%d\nest_tokens=%d (reading + ~15k per reviewer; verification extra)\n", agents, sl * 12 + sel * 15000
@@ -332,6 +343,8 @@ cmd_inventory() {
       --files) _expand="$_expand${2-}$NH_NL"; shift 2 || shift ;;
       --no-tests) _notests=1; shift ;;
       --tests) _notests=; shift ;;
+      --prune-tests) _notests=; _prune=1; shift ;;
+      --only-tests) export NH_ONLY_TESTS=1; shift ;;
       --with-nonprod) _nonprod=1; shift ;;
       --top|--skip|--fit|--max-lines|--plan) shift 2 || shift ;;
       --loop) shift ;;
@@ -395,6 +408,8 @@ cmd_clones() {
       --min-lines) _min=${2-}; shift 2 || shift ;;
       --no-tests) _notests=1; shift ;;
       --tests) _notests=; shift ;;
+      --prune-tests) _notests=; _prune=1; shift ;;
+      --only-tests) export NH_ONLY_TESTS=1; shift ;;
       --with-nonprod) _nonprod=1; shift ;;
       --top|--skip|--fit|--max-lines) shift 2 || shift ;;
       --loop) shift ;;
@@ -406,6 +421,14 @@ cmd_clones() {
   select_files "$_path" "$_notests" "$_nonprod"
   _dir=$NH_STATE/shards/$SEL_KEY; mkdir -p "$_dir"
   _out=$_dir/clones.txt
+  # Reuse the files of the last `nahuya shards` for this target, so plans,
+  # `## skip` blocks, --top/--skip and the test choice carry over.
+  _from=selection
+  if ls "$_dir"/shard-*.txt >/dev/null 2>&1; then
+    SEL_FILES=$(cat "$_dir"/shard-*.txt | sed -n 's/^\(.*\) ([0-9]* lines)$/\1/p'); _from=shards
+  fi
+  # Data and markup repeat by nature; look for duplicated code only.
+  SEL_FILES=$(printf '%s\n' "$SEL_FILES" | grep -v -i -E '\.(json|jsonc|ya?ml|xml|html?|css|scss|svg|csv|tsv|toml|ini|lock|txt|md|mdx|rst|snap)$')
   _pairs=$(cd "$NH_TOP" && printf '%s\n' "$SEL_FILES" | nh_clones "$_min" | head -40)
   {
     echo "# nahuya clone candidates: near-identical code ranges (whitespace-normalized; comments and imports ignored)."
@@ -413,7 +436,50 @@ cmd_clones() {
     printf '%s\n' "$_pairs" | awk -F'\t' 'NF { printf "%d  %s:%d-%d  <->  %s:%d-%d\n", $1, $2, $3, $4, $5, $6, $7 }'
   } > "$_out"
   echo "clones=$_out"
+  echo "files=$(printf '%s\n' "$SEL_FILES" | grep -c .) (from the last ${_from}; data and markup left out)"
   echo "pairs=$(printf '%s\n' "$_pairs" | grep -c .)"
+}
+
+# Short user-level commands (/nah-review, /nah-polish, ...). Plugin commands
+# are always namespaced, so unprefixed names have to live in ~/.claude/skills.
+NH_ALIAS_MARK='<!-- nahuya alias: managed by `nahuya aliases`; remove with `nahuya aliases remove` -->'
+alias_skill() { # name description hint body
+  printf -- '---\nname: %s\ndescription: %s\n' "$1" "$2"
+  [ -z "$3" ] || printf 'argument-hint: "%s"\n' "$3"
+  printf 'disable-model-invocation: true\n---\n\n%s\n\n%s\n' "$NH_ALIAS_MARK" "$4"
+}
+cmd_aliases() {
+  _skills=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills
+  case ${1:-install} in
+    install)
+      for _n in review polish skip stats; do
+        _d=$_skills/nah-$_n
+        if [ -f "$_d/SKILL.md" ] && ! grep -qF 'nahuya alias:' "$_d/SKILL.md"; then
+          echo "skipped /nah-$_n: $_d/SKILL.md exists and isn't ours"; continue
+        fi
+        mkdir -p "$_d"
+        case $_n in
+          review) alias_skill nah-review "Short for /nahuya:review: report-only over-engineering review." \
+            "[tests] [all | folder | base..tip]  default: your unpushed changes" \
+            'Invoke the `nahuya:review` skill with the arguments: $ARGUMENTS' ;;
+          polish) alias_skill nah-polish "Short for /nahuya:polish: review-and-fix loop for over-engineering." \
+            "[tests] [all | folder | base..tip]  default: commits waiting to be pushed" \
+            'Invoke the `nahuya:polish` skill with the arguments: $ARGUMENTS' ;;
+          skip) alias_skill nah-skip "Short for /nahuya:skip: let the next push through the nahuya gate." "" \
+            "$(printf '!`nahuya skip`\n\nTell the user in one line what the output above says. If a push was blocked\nearlier in this session, run it again.')" ;;
+          stats) alias_skill nah-stats "What past nahuya reviews applied and rejected in this repo." "" \
+            "$(printf '!`nahuya stats`\n\nShow the output above to the user as is.')" ;;
+        esac > "$_d/SKILL.md"
+        echo "installed /nah-$_n"
+      done
+      echo "Start a new session (or /reload-plugins) to see them." ;;
+    remove)
+      for _d in "$_skills"/nah-*; do
+        [ -f "$_d/SKILL.md" ] && grep -qF 'nahuya alias:' "$_d/SKILL.md" || continue
+        rm -rf "$_d"; echo "removed /${_d##*/}"
+      done ;;
+    *) nh_die "usage: nahuya aliases [install|remove]" ;;
+  esac
 }
 
 ledger_init() {
@@ -502,7 +568,7 @@ cmd_config() {
     _vs=$(nh_cfg_src "$_k")
     printf '  %-15s %-9s %s\n' "$(printf '%s' "$_k" | tr _ -)" "${_vs%%"$NH_TAB"*}" "(${_vs#*"$NH_TAB"})"
   done
-  echo "Change: /nahuya:config KEY VALUE [--global]. Reset: /nahuya:config KEY --unset [--global]."
+  echo "Change: /plugin configure. Per repo: git config nahuya.KEY VALUE (--global for all repos, --unset to reset)."
 }
 
 valid_values() {
@@ -549,6 +615,7 @@ case $_cmd in
   status) cmd_status "$@" ;;
   diff) cmd_diff "$@" ;;
   shards) cmd_shards "$@" ;;
+  aliases) cmd_aliases "$@" ;;
   inventory) cmd_inventory "$@" ;;
   clones) cmd_clones "$@" ;;
   log) cmd_log "$@" ;;
