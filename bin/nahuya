@@ -176,6 +176,15 @@ signal_counts() {
     xargs -0 git -c core.quotePath=false grep -I -c -E "$NH_SIGNALS" -- 2>/dev/null)
 }
 
+# One line per non-production folder the selection left out, biggest first.
+nonprod_summary() {
+  [ -n "$SEL_SKIPPED" ] || return 0
+  printf '%s\n' "$SEL_SKIPPED" | grep . | count_lines | awk -F'\t' -v re="$NH_NONPROD_RE" '
+    { p = $2; if (match(p, re)) { k = substr(p, 1, RSTART + RLENGTH - 1); sub(/^\//, "", k); s[k] += $1 } }
+    END { for (k in s) printf "%d\t%s\n", s[k], k }' | sort -t "$NH_TAB" -k1,1nr |
+    awk -F'\t' '{ printf "skipped_nonprod=%s (%d lines; pass --with-nonprod to include)\n", $2, $1 }'
+}
+
 # Files for a whole-repo or folder run, one per line, grouped by directory.
 # Sets SEL_ALL (every candidate), SEL_FILES (after the test choice), SEL_TESTS
 # ("path<TAB>all" for test files, "path<TAB>N" for N lines of inline tests),
@@ -264,9 +273,6 @@ cmd_shards() {
   fi
   mkdir -p "$_dir"; rm -f "$_dir"/shard-*.txt
   _signals=$(signal_counts)
-  _skipped=$(printf '%s\n' "$SEL_SKIPPED" | grep . | count_lines | awk -F'\t' -v re="$NH_NONPROD_RE" '
-    { p = $2; if (match(p, re)) { k = substr(p, 1, RSTART + RLENGTH - 1); sub(/^\//, "", k); s[k] += $1 } }
-    END { for (k in s) printf "%s %d\n", k, s[k] }' | sort -k2,2nr | head -8)
   _planned=; [ -z "$_plan" ] || _planned=$(tr -d '\r' < "$_plan")
   printf '%s\n' "$SEL_ALL" | count_lines | NH_SIG=$_signals NH_TESTS=$SEL_TESTS NH_PLAN=$_planned awk -F'\t' -v max="$_max" -v dir="$_dir" \
     -v top="$_top" -v skip="$_skip" -v fit="$_fit" -v agents="$(nh_cfg max_agents)" -v notests="$_notests" -v prune="$_prune" \
@@ -389,7 +395,7 @@ cmd_shards() {
         for (d in udir) printf "unassigned_dir=%s (%d lines)\n", d, udir[d]
       }
     }'
-  [ -z "$_skipped" ] || printf '%s\n' "$_skipped" | awk '{ printf "skipped_nonprod=%s (%d lines; pass --with-nonprod to include)\n", $1, $2 }'
+  nonprod_summary
   if [ -n "$_loop" ]; then
     nh_resolve_tip HEAD || nh_die "no commits yet"
     rm -rf "$_rd"; mkdir -p "$_rd"
@@ -450,6 +456,7 @@ cmd_inventory() {
       # deepest level that keeps the listing short
       for (D = 1; D <= 12; D++) { c = 0; for (i = 1; i <= nd; i++) if (dep[dirs[i]] <= D) c++; if (c > 150) break }
       D = (D > 1) ? D - 1 : 1
+      if ("./" in man) printf "./  manifest=%s\n", man["./"]
       # sort dirs by path (insertion sort; dir counts are small)
       for (i = 2; i <= nd; i++) { x = dirs[i]; j = i - 1; while (j >= 1 && dirs[j] > x) { dirs[j + 1] = dirs[j]; j-- } dirs[j + 1] = x }
       for (i = 1; i <= nd; i++) {
@@ -462,9 +469,7 @@ cmd_inventory() {
       for (f = 1; f <= nf; f++) if (fpath[f] !~ /\//) printf "%s  lines=%d%s\n", fpath[f], flin[f], (sig[fpath[f]] ? sprintf(" signals=%d", sig[fpath[f]]) : "")
       for (f = 1; f <= nf; f++) if (flin[f] >= shard) printf "big_file=%s (%d lines)\n", fpath[f], flin[f]
     }'
-  [ -z "$SEL_SKIPPED" ] || printf '%s\n' "$SEL_SKIPPED" | grep . | count_lines | awk -F'\t' -v re="$NH_NONPROD_RE" '
-    { p = $2; if (match(p, re)) { k = substr(p, 1, RSTART + RLENGTH - 1); sub(/^\//, "", k); s[k] += $1 } }
-    END { for (k in s) printf "skipped_nonprod=%s (%d lines; pass --with-nonprod to include)\n", k, s[k] }'
+  nonprod_summary
   mkdir -p "$NH_STATE/shards/$SEL_KEY"
 }
 

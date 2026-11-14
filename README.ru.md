@@ -388,7 +388,7 @@ exclude:                   # не считается и не ревьюится
 ## Разработка
 
 ```
-sh tests/run.sh                     # 174 теста, нужны только sh, git и awk
+sh tests/run.sh                     # 169 тестов, нужны только sh, git и awk
 claude --plugin-dir . -p "..."      # Claude Code с плагином из этой папки
 claude plugin validate .
 ```

@@ -285,6 +285,9 @@ out=$(sh "$NAHUYA" shards all)
 printf '%s\n' "$out" | grep -q '^skipped_nonprod=research/ (300 lines' && ok || bad "nonprod skipped: $out"
 grep -q 'research/' .git/nahuya/shards/all/*.txt && bad "research reviewed" || ok
 sh "$NAHUYA" shards all --with-nonprod | grep -q '^lines=2390$' && ok || bad "with-nonprod"
+lines examples/e.py 500; commit ex
+eq "non-production folders biggest first" "$(sh "$NAHUYA" inventory all | sed -n 's/^skipped_nonprod=\([^ ]*\).*/\1/p' | tr '\n' ' ')" "examples/ research/ "
+git rm -q -r examples; commit unex
 lines tests/test_x.py 120; commit t
 sh "$NAHUYA" shards all | grep -q '^test_lines=120 in 1 files' && ok || bad "test lines reported"
 out=$(sh "$NAHUYA" shards all --no-tests)
@@ -362,7 +365,7 @@ printf '%s\n' "$out" | grep -q 'shards/all/plan.md' && ok || bad "inventory plan
 sh "$NAHUYA" inventory all --files lib/ | grep -q '^  lib/a.py  lines=' && ok || bad "inventory --files"
 printf 'x\n' > Cargo.toml; commit manifest
 sh "$NAHUYA" inventory all | grep -q '^x.py  lines=' && ok || bad "root files listed"
-git ls-files | grep -q Cargo.toml && sh "$NAHUYA" inventory all | head -1 | grep -q 'inventory:' && ok || bad "inventory header"
+sh "$NAHUYA" inventory all | grep -q '^\./  manifest=Cargo.toml$' && ok || bad "root manifest shown: $(sh "$NAHUYA" inventory all)"
 printf '## core\nlib/\nweb/dup2.py\n## web\nweb/\n## skip: scratch\nx.py\n' > plan.md
 out=$(sh "$NAHUYA" shards all --no-tests --plan plan.md)
 printf '%s\n' "$out" | grep -q 'component=core$' && ok || bad "plan component: $out"

@@ -6,6 +6,13 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Whole-repo runs now list every non-production folder they skip, biggest first. Before, `shards`
+  showed only the eight largest and `nahuya inventory` printed them in no particular order.
+- `nahuya inventory` now shows a build manifest at the repo root, such as a root `Cargo.toml` or
+  `package.json`, which it used to leave out of the map.
+
 ## [0.6.4] - 2026-11-14
 
 ### Changed
