@@ -7,29 +7,21 @@ NH_ROOT=$(cd "$(dirname "$0")/.." && pwd) || exit 1
 
 usage() {
   cat <<'EOF'
-nahuya status [--defaults 'k=v ...'] [base..tip]   range, settings and loop context
+nahuya status [base..tip]                           range, settings and loop context
 nahuya diff --round K [--full] [base..tip]          write the diff for review round K
 nahuya diff --target [range|branch]                 write a diff for a one-off review
-nahuya shards [PATH|all] [--top N|--skip K|--fit N|--max-lines N] [--loop]
-                                                    split existing code into ranked review shards
+nahuya shards [all|PATH] [--top N|--skip K|--fit N|--max-lines N] [--no-tests]
+              [--with-nonprod] [--loop]             split existing code into ranked review shards
+nahuya inventory [all|PATH] [--files DIR] [--no-tests] [--with-nonprod]
+                                                    map of directories for planning components
+nahuya shards ... --plan FILE                       shards from a plan of "## component" blocks
+nahuya clones [all|PATH] [--min-lines N] [--no-tests]  find near-duplicate code across files
 nahuya log ROUND DECISION CATEGORY ID TEXT...       record a decision (applied|rejected|needs-context)
 nahuya mark [--keep-anchor]                         mark HEAD as reviewed (ends a loop)
 nahuya skip                                         let the next push of HEAD skip the gate
 nahuya config [KEY [VALUE|--unset] [--global]]      show or change settings
 nahuya stats                                        what past reviews applied and rejected
 EOF
-}
-
-# Shared option: --defaults 'k=v k=v' (plugin config values passed in by a skill).
-parse_defaults() {
-  REST=
-  while [ $# -gt 0 ]; do
-    case $1 in
-      --defaults) NH_USER_DEFAULTS=${2-}; shift 2 || shift ;;
-      --defaults=*) NH_USER_DEFAULTS=${1#--defaults=}; shift ;;
-      *) REST="$REST$1$NH_NL"; shift ;;
-    esac
-  done
 }
 
 require_repo() { nh_enter_repo || nh_die "not inside a git repository"; }
@@ -55,7 +47,6 @@ resolve_range() {
 }
 
 cmd_status() {
-  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
   require_repo
   if [ -n "${1-}" ]; then
     resolve_range "$1"
@@ -89,7 +80,6 @@ cmd_status() {
 
 cmd_diff() {
   _round=; _full=; _target=; _has_target=
-  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
   while [ $# -gt 0 ]; do
     case $1 in
       --round) _round=${2-}; shift 2 || shift ;;
@@ -109,6 +99,7 @@ cmd_diff() {
     rm -rf "$_rd"; mkdir -p "$_rd"
     printf '%s\n%s\n%s\n%s\n' "$ANCHOR" "$BASE" "$NH_BRANCH" "$(nh_count_added "$ANCHOR" "$NH_TIP" "$NH_BRANCH")" > "$_rd/session"
     nh_snapshot > "$_rd/tree-1"
+    ledger_init "$(nh_ledger_path "$ANCHOR" "$NH_BRANCH")"
     _n=$(nh_write_diff "$BASE" "$NH_TIP" "$_out")
   else
     [ -f "$_rd/session" ] || nh_die "no review loop in progress; start with: nahuya diff --round 1"
@@ -132,7 +123,11 @@ diff_target() {
     '')
       nh_resolve_tip HEAD || nh_die "no commits yet"
       _a=$(nh_anchor "$NH_TIP" "$NH_BRANCH") || nh_die "nothing to compare against; pass a range like main..HEAD"
-      _n=$(nh_write_diff "$(nh_review_base "$_a" "$NH_TIP" "$NH_BRANCH")" "$(nh_snapshot)" "$_out") ;;
+      _n=$(nh_write_diff "$(nh_review_base "$_a" "$NH_TIP" "$NH_BRANCH")" "$(nh_snapshot)" "$_out")
+      if [ "$_n" = 0 ] && git rev-parse -q --verify HEAD~1 >/dev/null 2>&1; then
+        _n=$(nh_write_diff HEAD~1 HEAD "$_out")
+        echo "note=nothing unreviewed; showing the last commit instead"
+      fi ;;
     *..*)
       resolve_range "$1"; _n=$(nh_write_diff "$BASE" "$NH_TIP" "$_out") ;;
     *)
@@ -145,22 +140,58 @@ diff_target() {
   echo "lines=$(wc -l < "$_out" | tr -d ' ')"
 }
 
-# Split existing code under a path into shards of whole files (directory order),
-# rank shards by cheap over-engineering signals, and write one manifest per
-# selected shard. --top N keeps the N most suspicious, --skip K drops the first
-# K (next batch), --fit N grows shards until everything fits in N.
-# With --loop, also start a polish session.
+# Files for a whole-repo or folder run, one per line, grouped by directory.
+# Sets SEL_FILES, SEL_TESTS (test files among them), SEL_KEY (state dir name).
+# Options: --no-tests, --with-nonprod. Non-production dirs are skipped by
+# default and reported by `nahuya shards`.
+select_files() {
+  _target=${1:-.}; _notests=$2; _nonprod=$3
+  if [ "$_target" = all ] && [ ! -e all ]; then _target=$NH_TOP; fi
+  SEL_KEY=$(printf '%s' "${1:-all}" | sed 's#^\./##; s#/*$##')
+  case $SEL_KEY in ''|.|all) SEL_KEY=all ;; esac
+  SEL_KEY=$(printf '%s' "$SEL_KEY" | tr -c 'A-Za-z0-9._-' '_')
+  _all=$(git -c core.quotePath=false grep -I -l --full-name -e '' -- "$_target" 2>/dev/null | nh_keep review)
+  if [ -d "$_target" ]; then
+    _all=$(printf '%s\n' "$_all" | while IFS= read -r _f; do nh_is_doc "$_f" || printf '%s\n' "$_f"; done)
+  fi
+  [ -n "$_all" ] || nh_die "no tracked text files to review under $_target"
+  SEL_SKIPPED=
+  if [ -z "$_nonprod" ]; then
+    SEL_SKIPPED=$(printf '%s\n' "$_all" | grep -E "$NH_NONPROD_RE")
+    _all=$(printf '%s\n' "$_all" | grep -v -E "$NH_NONPROD_RE")
+  fi
+  SEL_TESTS=$(printf '%s\n' "$_all" | while IFS= read -r _f; do [ -n "$_f" ] && nh_is_test "$_f" && printf '%s\n' "$_f"; done)
+  if [ -n "$_notests" ] && [ -n "$SEL_TESTS" ]; then
+    _all=$(printf '%s\n' "$_all" | NH_T=$SEL_TESTS awk 'BEGIN { n = split(ENVIRON["NH_T"], t, "\n"); for (i = 1; i <= n; i++) skip[t[i]] = 1 } !($0 in skip)')
+  fi
+  # group by directory: sort by (dirname, path)
+  SEL_FILES=$(printf '%s\n' "$_all" | awk 'NF { d = $0; if (!sub(/\/[^\/]*$/, "", d)) d = "."; print d "\t" $0 }' | LC_ALL=C sort | cut -f2-)
+}
+
+# Line counts for a file list on stdin ("count<TAB>path").
+count_lines() {
+  (cd "$NH_TOP" && tr '\n' '\000' | xargs -0 wc -l 2>/dev/null) |
+    awk '{ c = $1; p = $0; sub(/^[ \t]*[0-9]+[ \t]/, "", p); if (p != "total") print c "\t" p }'
+}
+
+# Split existing code into shards of whole files, keeping each directory in one
+# shard when it fits, ranked by cheap over-engineering signals. --top N keeps
+# the N most suspicious, --skip K drops the first K (next batch), --fit N grows
+# shards until everything fits in N. With --loop, also start a polish session.
 NH_SIGNALS='abstract[[:space:]]+class|@abstractmethod|ABC[),:]|Protocol[),:]|interface[[:space:]]+[A-Z]|implements[[:space:]]|Factory|Strategy|Builder|Manager([^A-Za-z0-9_]|$)|Registry|Provider([^A-Za-z0-9_]|$)|Adapter([^A-Za-z0-9_]|$)|Wrapper([^A-Za-z0-9_]|$)|Base[A-Z]|TypeVar|Generic\[|<[A-Z][A-Za-z]*( extends [^>]*)?>|\*\*kwargs|Options([^A-Za-z0-9_]|$)|plugin|register\('
 cmd_shards() {
-  _max=; _loop=; _path=; _top=0; _skip=0; _fit=0
-  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
+  _max=; _loop=; _path=; _top=0; _skip=0; _fit=0; _notests=; _nonprod=; _plan=
   while [ $# -gt 0 ]; do
     case $1 in
+      --plan) _plan=${2-}; shift 2 || shift ;;
       --max-lines) _max=${2-}; shift 2 || shift ;;
       --top) _top=${2-}; shift 2 || shift ;;
       --skip) _skip=${2-}; shift 2 || shift ;;
       --fit) _fit=${2-}; shift 2 || shift ;;
       --loop) _loop=1; shift ;;
+      --no-tests) _notests=1; shift ;;
+      --tests) _notests=; shift ;;
+      --with-nonprod) _nonprod=1; shift ;;
       *) _path=$1; shift ;;
     esac
   done
@@ -169,62 +200,115 @@ cmd_shards() {
   for _n in "$_max" "$_top" "$_skip" "$_fit"; do
     case $_n in ''|*[!0-9]*) nh_die "--max-lines, --top, --skip and --fit take whole numbers" ;; esac
   done
-  if [ "$_path" = all ] && [ ! -e all ]; then _path=$NH_TOP; fi
-  _files=$(git -c core.quotePath=false grep -I -l --full-name -e '' -- "${_path:-.}" 2>/dev/null | nh_keep review)
-  if [ -d "${_path:-.}" ]; then
-    _files=$(printf '%s\n' "$_files" | while IFS= read -r _f; do nh_is_doc "$_f" || printf '%s\n' "$_f"; done)
+  if [ -n "$_plan" ]; then
+    [ -f "$_plan" ] || nh_die "plan file not found: $_plan"
+    [ "$_fit" = 0 ] || nh_die "--fit doesn't apply to a plan; merge components in the plan instead"
   fi
-  [ -n "$_files" ] || nh_die "no tracked text files to review under ${_path:-.}"
-  _dir=$NH_STATE/shards
-  rm -rf "$_dir"; mkdir -p "$_dir"
-  _counts=$(cd "$NH_TOP" && printf '%s\n' "$_files" | tr '\n' '\000' | xargs -0 wc -l 2>/dev/null)
-  _signals=$(cd "$NH_TOP" && printf '%s\n' "$_files" | tr '\n' '\000' |
+  select_files "$_path" "$_notests" "$_nonprod"
+  _dir=$NH_STATE/shards/$SEL_KEY
+  mkdir -p "$_dir"; rm -f "$_dir"/shard-*.txt
+  _signals=$(cd "$NH_TOP" && printf '%s\n' "$SEL_FILES" | tr '\n' '\000' |
     xargs -0 git -c core.quotePath=false grep -I -c -E "$NH_SIGNALS" -- 2>/dev/null)
-  printf '%s\n' "$_counts" | NH_FILES=$_files NH_SIG=$_signals awk -v max="$_max" -v dir="$_dir" \
-    -v top="$_top" -v skip="$_skip" -v fit="$_fit" -v agents="$(nh_cfg max_agents)" '
+  _skipped=$(printf '%s\n' "$SEL_SKIPPED" | grep . | count_lines | awk -F'\t' -v re="$NH_NONPROD_RE" '
+    { p = $2; if (match(p, re)) { k = substr(p, 1, RSTART + RLENGTH - 1); sub(/^\//, "", k); s[k] += $1 } }
+    END { for (k in s) printf "%s %d\n", k, s[k] }' | sort -k2,2nr | head -8)
+  _planned=; [ -z "$_plan" ] || _planned=$(tr -d '\r' < "$_plan")
+  printf '%s\n' "$SEL_FILES" | count_lines | NH_SIG=$_signals NH_TESTS=$SEL_TESTS NH_PLAN=$_planned awk -F'\t' -v max="$_max" -v dir="$_dir" \
+    -v top="$_top" -v skip="$_skip" -v fit="$_fit" -v agents="$(nh_cfg max_agents)" -v notests="$_notests" '
     BEGIN {
-      n = split(ENVIRON["NH_FILES"], f, "\n"); for (i = 1; i <= n; i++) want[f[i]] = 1
       m = split(ENVIRON["NH_SIG"], g, "\n")
       for (i = 1; i <= m; i++) { p = g[i]; c = p; sub(/:[0-9]+$/, "", p); sub(/.*:/, "", c); sig[p] = c + 0 }
+      m = split(ENVIRON["NH_TESTS"], t, "\n"); for (i = 1; i <= m; i++) if (t[i] != "") istest[t[i]] = 1
+      # plan: "## component" headers, then one path (dir/ or file) per line
+      m = split(ENVIRON["NH_PLAN"], pl, "\n")
+      for (i = 1; i <= m; i++) {
+        x = pl[i]; sub(/^[ \t]+/, "", x); sub(/[ \t]+$/, "", x)
+        if (x ~ /^## /) { nc++; cname[nc] = substr(x, 4); cskip[nc] = (tolower(cname[nc]) ~ /^skip/); continue }
+        if (x == "" || x ~ /^#/) continue
+        sub(/^[-*] +/, "", x); sub(/^\.\//, "", x); sub(/ +\(.*$/, "", x)
+        if (x == "." || x == "all") x = ""
+        if (nc == 0) { nc = 1; cname[1] = "unnamed" }
+        ne++; ent[ne] = x; ecomp[ne] = nc
+      }
     }
     {
-      c = $1 + 0; p = $0; sub(/^[ \t]*[0-9]+[ \t]/, "", p)
-      if (!(p in want)) next
-      nf++; fp[nf] = p; fl[nf] = c; total += c
+      nf++; fp[nf] = $2; fl[nf] = $1 + 0; total += fl[nf]
+      if ($2 in istest) { tl += fl[nf]; tf++ }
+      d = $2; if (!sub(/\/[^\/]*$/, "", d)) d = "."
+      if (nf == 1 || d != lastd) { ng++; gs[ng] = nf; lastd = d }
+      ge[ng] = nf; gl[ng] += fl[nf]
     }
-    function pack(lim,   i, k, cur) {
+    function pack(lim,   j, i, k, cur) {
       k = 0; cur = 0
-      for (i = 1; i <= nf; i++) {
-        if (k == 0) k = 1
-        if (cur > 0 && cur + fl[i] > lim) { k++; cur = 0 }
-        cur += fl[i]; of[i] = k
+      for (j = 1; j <= ng; j++) {
+        if (gl[j] <= lim) {
+          if (k == 0 || (cur > 0 && cur + gl[j] > lim)) { k++; cur = 0 }
+          for (i = gs[j]; i <= ge[j]; i++) of[i] = k
+          cur += gl[j]
+        } else {
+          if (k == 0 || cur > 0) { k++; cur = 0 }
+          for (i = gs[j]; i <= ge[j]; i++) { if (cur > 0 && cur + fl[i] > lim) { k++; cur = 0 } of[i] = k; cur += fl[i] }
+        }
       }
       return k
     }
+    function matches(p, e) {
+      if (e == "") return 1
+      if (p == e) return 1
+      if (substr(e, length(e)) == "/") return index(p, e) == 1
+      return index(p, e "/") == 1
+    }
     END {
-      if (fit > 0) { max = int(total / fit) + 1; while (pack(max) > fit) max = int(max * 1.1) + 1 }
-      k = pack(max)
+      if (ne > 0) {
+        # plan mode: longest matching entry wins; shards follow plan order
+        for (i = 1; i <= nf; i++) {
+          best = 0; bl = -1
+          for (j = 1; j <= ne; j++) if (matches(fp[i], ent[j]) && length(ent[j]) > bl) { best = j; bl = length(ent[j]) }
+          if (!best) { ul += fl[i]; un++; d = fp[i]; if (!sub(/\/[^\/]*$/, "/", d)) d = "./"; udir[d] += fl[i]; continue }
+          c = ecomp[best]
+          if (cskip[c]) { skl[c] += fl[i]; continue }
+          if (!(c in slot)) { k++; slot[c] = k; label[k] = cname[c] }
+          of[i] = slot[c]
+        }
+        for (s = 1; s <= k; s++) ord[s] = s
+      } else {
+        if (fit > 0) { max = int(total / fit) + 1; while (pack(max) > fit) max = int(max * 1.1) + 1 }
+        k = pack(max)
+      }
       for (i = 1; i <= nf; i++) {
-        s = of[i]; body[s] = body[s] sprintf("%s (%d lines)\n", fp[i], fl[i])
+        s = of[i]; if (!s) continue
+        body[s] = body[s] sprintf("%s (%d lines)\n", fp[i], fl[i])
         lines[s] += fl[i]; cnt[s]++; hits[s] += sig[fp[i]]
       }
-      # rank: signal hits per 1000 lines, ties by size
-      for (s = 1; s <= k; s++) { score[s] = lines[s] ? hits[s] * 1000 / lines[s] : 0; ord[s] = s }
-      for (a = 1; a <= k; a++) for (b = a + 1; b <= k; b++)
-        if (score[ord[b]] > score[ord[a]] || (score[ord[b]] == score[ord[a]] && lines[ord[b]] > lines[ord[a]])) { t = ord[a]; ord[a] = ord[b]; ord[b] = t }
+      if (ne == 0) {
+        for (s = 1; s <= k; s++) { score[s] = lines[s] ? hits[s] * 1000 / lines[s] : 0; ord[s] = s }
+        for (a = 1; a <= k; a++) for (b = a + 1; b <= k; b++)
+          if (score[ord[b]] > score[ord[a]] || (score[ord[b]] == score[ord[a]] && lines[ord[b]] > lines[ord[a]])) { x = ord[a]; ord[a] = ord[b]; ord[b] = x }
+      }
       first = skip + 1; last = (top > 0 && skip + top < k) ? skip + top : k
       sel = 0; sl = 0
       for (r = first; r <= last; r++) {
         s = ord[r]; sel++; sl += lines[s]
         out = dir "/shard-" sel ".txt"
-        printf "# nahuya shard %d of %d (rank %d of %d by over-engineering signals): existing code to review in full (paths relative to the repo root)\n%s", sel, last - first + 1, r, k, body[s] > out
+        if (ne > 0) printf "# nahuya shard %d of %d, component: %s. Existing code to review in full (paths relative to the repo root)\n%s", sel, last - first + 1, label[s], body[s] > out
+        else printf "# nahuya shard %d of %d (rank %d of %d by over-engineering signals): existing code to review in full (paths relative to the repo root)\n%s", sel, last - first + 1, r, k, body[s] > out
         close(out)
-        printf "shard=%s files=%d lines=%d signals=%d\n", out, cnt[s], lines[s], hits[s]
+        printf "shard=%s files=%d lines=%d signals=%d%s\n", out, cnt[s], lines[s], hits[s], (ne > 0 ? " component=" label[s] : "")
+        if (ne > 0 && lines[s] > 2 * max) printf "warning=component \"%s\" has %d lines, over twice shard-lines (%d); consider splitting it\n", label[s], lines[s], max
       }
-      printf "files=%d\nlines=%d\nshard_lines=%d\nshards_total=%d\nshards_selected=%d\nselected_lines=%d\n", nf, total, max, k, sel, sl
+      printf "files=%d\nlines=%d\n", nf, total
+      if (notests) printf "test_lines=excluded (--no-tests)\n"
+      else printf "test_lines=%d in %d files (included; pass --no-tests to leave them out)\n", tl, tf
+      printf "shard_lines=%d\nshards_total=%d\nshards_selected=%d\nselected_lines=%d\n", max, k, sel, sl
       if (last < k) printf "remaining=%d (next batch: --skip %d)\n", k - last, last
       printf "max_agents=%d\nest_tokens=%d (reading + ~15k per reviewer; verification extra)\n", agents, sl * 12 + sel * 15000
+      for (c = 1; c <= nc; c++) if (cskip[c] && skl[c]) printf "planned_skip=%s (%d lines, not reviewed)\n", cname[c], skl[c]
+      if (un) {
+        printf "unassigned=%d files, %d lines are in no component; add them to the plan or to a \"## skip\" component\n", un, ul
+        for (d in udir) printf "unassigned_dir=%s (%d lines)\n", d, udir[d]
+      }
     }'
+  [ -z "$_skipped" ] || printf '%s\n' "$_skipped" | awk '{ printf "skipped_nonprod=%s (%d lines; pass --with-nonprod to include)\n", $1, $2 }'
   if [ -n "$_loop" ]; then
     nh_resolve_tip HEAD || nh_die "no commits yet"
     _rd=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")
@@ -232,8 +316,109 @@ cmd_shards() {
     printf '%s\n%s\n%s\n%s\n' "$NH_TIP" "$NH_TIP" "$NH_BRANCH" \
       "$(cat "$_dir"/shard-*.txt | sed -n 's/.* (\([0-9]*\) lines)$/\1/p' | awk '{ s += $1 } END { print s + 0 }')" > "$_rd/session"
     nh_snapshot > "$_rd/tree-1"
-    echo "ledger=$(nh_ledger_path "$NH_TIP" "$NH_BRANCH")"
+    _l=$(nh_ledger_path "$NH_TIP" "$NH_BRANCH"); ledger_init "$_l"
+    echo "ledger=$_l"
   fi
+}
+
+# A compact map of the code a run would cover, for the model to plan logical
+# components from: directories with files, lines, tests, over-engineering
+# signals and build manifests. --files DIR lists that directory's files.
+NH_MANIFEST_RE='(^|/)(Cargo\.toml|package\.json|go\.mod|pyproject\.toml|setup\.py|pom\.xml|build\.gradle(\.kts)?|[^/]*\.csproj|mix\.exs|Gemfile|composer\.json|deno\.json|Package\.swift|CMakeLists\.txt)$'
+cmd_inventory() {
+  _path=; _notests=; _nonprod=; _expand=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --files) _expand="$_expand${2-}$NH_NL"; shift 2 || shift ;;
+      --no-tests) _notests=1; shift ;;
+      --tests) _notests=; shift ;;
+      --with-nonprod) _nonprod=1; shift ;;
+      --top|--skip|--fit|--max-lines|--plan) shift 2 || shift ;;
+      --loop) shift ;;
+      *) _path=$1; shift ;;
+    esac
+  done
+  require_repo
+  select_files "$_path" "$_notests" "$_nonprod"
+  _signals=$(cd "$NH_TOP" && printf '%s\n' "$SEL_FILES" | tr '\n' '\000' |
+    xargs -0 git -c core.quotePath=false grep -I -c -E "$NH_SIGNALS" -- 2>/dev/null)
+  _manifests=$(git -c core.quotePath=false ls-files --full-name -- "$NH_TOP" 2>/dev/null | grep -E "$NH_MANIFEST_RE")
+  _plan=$NH_STATE/shards/$SEL_KEY/plan.md
+  printf '%s\n' "$SEL_FILES" | count_lines | NH_SIG=$_signals NH_TESTS=$SEL_TESTS NH_MAN=$_manifests NH_EXP=$_expand awk -F'\t' \
+    -v shard="$(nh_cfg shard_lines)" -v agents="$(nh_cfg max_agents)" -v plan="$_plan" '
+    BEGIN {
+      m = split(ENVIRON["NH_SIG"], g, "\n")
+      for (i = 1; i <= m; i++) { p = g[i]; c = p; sub(/:[0-9]+$/, "", p); sub(/.*:/, "", c); sig[p] = c + 0 }
+      m = split(ENVIRON["NH_TESTS"], t, "\n"); for (i = 1; i <= m; i++) if (t[i] != "") istest[t[i]] = 1
+      m = split(ENVIRON["NH_MAN"], mf, "\n")
+      for (i = 1; i <= m; i++) { d = mf[i]; b = d; if (!sub(/\/[^\/]*$/, "/", d)) d = "./"; sub(/.*\//, "", b); man[d] = man[d] (man[d] ? "," : "") b }
+      m = split(ENVIRON["NH_EXP"], ex, "\n"); for (i = 1; i <= m; i++) if (ex[i] != "") { e = ex[i]; sub(/^\.\//, "", e); if (e !~ /\/$/) e = e "/"; expand[e] = 1 }
+    }
+    {
+      n = $1 + 0; p = $2; nf++; total += n; fpath[nf] = p; flin[nf] = n
+      ist = (p in istest); if (ist) tl += n
+      d = p; depth = 0
+      while (sub(/\/[^\/]*$/, "", d)) {
+        k = d "/"; if (!(k in dl)) { nd++; dirs[nd] = k; dep[k] = split(k, tmp, "/") - 1 }
+        dl[k] += n; df[k]++; ds[k] += sig[p]; if (ist) dt[k] += n
+      }
+    }
+    END {
+      printf "# inventory: %d files, %d lines (tests: %d), shard-lines %d, max-agents %d\n", nf, total, tl, shard, agents
+      printf "# Group these into logical components for review and write the plan to:\n#   %s\n", plan
+      # deepest level that keeps the listing short
+      for (D = 1; D <= 12; D++) { c = 0; for (i = 1; i <= nd; i++) if (dep[dirs[i]] <= D) c++; if (c > 150) break }
+      D = (D > 1) ? D - 1 : 1
+      # sort dirs by path (insertion sort; dir counts are small)
+      for (i = 2; i <= nd; i++) { x = dirs[i]; j = i - 1; while (j >= 1 && dirs[j] > x) { dirs[j + 1] = dirs[j]; j-- } dirs[j + 1] = x }
+      for (i = 1; i <= nd; i++) {
+        k = dirs[i]; if (dep[k] > D && !(k in expand)) continue
+        ind = ""; for (j = 1; j < dep[k]; j++) ind = ind "  "
+        printf "%s%s  files=%d lines=%d%s%s%s\n", ind, k, df[k], dl[k], (dt[k] ? sprintf(" tests=%d", dt[k]) : ""), (ds[k] ? sprintf(" signals=%d", ds[k]) : ""), (k in man ? " manifest=" man[k] : "")
+        if (k in expand)
+          for (f = 1; f <= nf; f++) { q = fpath[f]; r = q; sub(/\/[^\/]*$/, "/", r); if (r == k) printf "%s  %s  lines=%d%s%s\n", ind, q, flin[f], (sig[q] ? sprintf(" signals=%d", sig[q]) : ""), ((q in istest) ? " test" : "") }
+      }
+      for (f = 1; f <= nf; f++) if (fpath[f] !~ /\//) printf "%s  lines=%d%s\n", fpath[f], flin[f], (sig[fpath[f]] ? sprintf(" signals=%d", sig[fpath[f]]) : "")
+      for (f = 1; f <= nf; f++) if (flin[f] >= shard) printf "big_file=%s (%d lines)\n", fpath[f], flin[f]
+    }'
+  [ -z "$SEL_SKIPPED" ] || printf '%s\n' "$SEL_SKIPPED" | grep . | count_lines | awk -F'\t' -v re="$NH_NONPROD_RE" '
+    { p = $2; if (match(p, re)) { k = substr(p, 1, RSTART + RLENGTH - 1); sub(/^\//, "", k); s[k] += $1 } }
+    END { for (k in s) printf "skipped_nonprod=%s (%d lines; pass --with-nonprod to include)\n", k, s[k] }'
+  mkdir -p "$NH_STATE/shards/$SEL_KEY"
+}
+
+# Near-duplicate code across the same files a whole-repo run would review.
+cmd_clones() {
+  _path=; _notests=; _nonprod=; _min=6
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --min-lines) _min=${2-}; shift 2 || shift ;;
+      --no-tests) _notests=1; shift ;;
+      --tests) _notests=; shift ;;
+      --with-nonprod) _nonprod=1; shift ;;
+      --top|--skip|--fit|--max-lines) shift 2 || shift ;;
+      --loop) shift ;;
+      *) _path=$1; shift ;;
+    esac
+  done
+  case $_min in ''|*[!0-9]*) nh_die "--min-lines takes a whole number" ;; esac
+  require_repo
+  select_files "$_path" "$_notests" "$_nonprod"
+  _dir=$NH_STATE/shards/$SEL_KEY; mkdir -p "$_dir"
+  _out=$_dir/clones.txt
+  _pairs=$(cd "$NH_TOP" && printf '%s\n' "$SEL_FILES" | nh_clones "$_min" | head -40)
+  {
+    echo "# nahuya clone candidates: near-identical code ranges (whitespace-normalized; comments and imports ignored)."
+    echo "# Paths relative to the repo root. Each line: <similar lines>  <range A>  <->  <range B>"
+    printf '%s\n' "$_pairs" | awk -F'\t' 'NF { printf "%d  %s:%d-%d  <->  %s:%d-%d\n", $1, $2, $3, $4, $5, $6, $7 }'
+  } > "$_out"
+  echo "clones=$_out"
+  echo "pairs=$(printf '%s\n' "$_pairs" | grep -c .)"
+}
+
+ledger_init() {
+  mkdir -p "${1%/*}"
+  [ -f "$1" ] || printf '# round\tdecision\tcategory\tid\ttext (last line per id wins)\n' > "$1"
 }
 
 session_ledger() {
@@ -248,8 +433,7 @@ cmd_log() {
   case $_d in applied|rejected|needs-context) ;; *) nh_die "decision must be applied, rejected or needs-context" ;; esac
   require_repo
   _l=$(session_ledger) || nh_die "no review loop in progress; start with: nahuya diff --round 1"
-  mkdir -p "${_l%/*}"
-  [ -f "$_l" ] || printf '# round\tdecision\tcategory\tid\ttext (last line per id wins)\n' > "$_l"
+  ledger_init "$_l"
   _text=$(printf '%s' "$*" | tr '\t\r\n' '   ')
   _c=$(printf '%s' "$_c" | tr '\t\r\n' '   ')
   _id=$(printf '%s' "$_id" | tr '\t\r\n' '   ')
@@ -294,15 +478,14 @@ cmd_skip() {
 }
 
 cmd_config() {
-  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
   _global=; _args=
   for _a in "$@"; do
     if [ "$_a" = --global ]; then _global=--global; else _args="$_args$_a$NH_NL"; fi
   done
-  IFS=$NH_NL; set -f; set -- $_args; set +f; IFS=$_o
+  _o=$IFS; IFS=$NH_NL; set -f; set -- $_args; set +f; IFS=$_o
   _inrepo=; nh_enter_repo && _inrepo=1
   if [ $# -ge 1 ]; then
-    _k=$(nh_key "$1") || nh_die "unknown setting '$1'. Settings: gate threshold max-rounds model fix-mode layer shard-lines max-agents"
+    _k=$(nh_key "$1") || nh_die "unknown setting '$1'. Settings: gate threshold max-rounds model fix-mode layer shard-lines max-agents depth"
     [ -n "$_global" ] || [ -n "$_inrepo" ] || nh_die "not inside a git repository; add --global"
     _gk=nahuya.$(printf '%s' "$_k" | tr _ -)
     if [ $# -ge 2 ]; then
@@ -328,6 +511,7 @@ valid_values() {
     threshold|max_rounds|shard_lines|max_agents) echo "Use a whole number of 1 or more." ;;
     reviewer_model) echo "Use inherit, opus, fable, sonnet or haiku." ;;
     fix_mode) echo "Use commit, amend or uncommitted." ;;
+    depth) echo "Use auto, normal or deep." ;;
   esac
 }
 
@@ -365,6 +549,8 @@ case $_cmd in
   status) cmd_status "$@" ;;
   diff) cmd_diff "$@" ;;
   shards) cmd_shards "$@" ;;
+  inventory) cmd_inventory "$@" ;;
+  clones) cmd_clones "$@" ;;
   log) cmd_log "$@" ;;
   mark) cmd_mark "$@" ;;
   skip) cmd_skip "$@" ;;

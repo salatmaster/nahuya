@@ -1,6 +1,6 @@
 {
   "name": "nahuya",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Over-engineering review for Claude Code: a manual reviewer that proves what it calls unused, a pre-push review-and-fix loop, and a tiny layer that makes unrequested additions visible.",
   "author": {
     "name": "salatmaster"
@@ -80,6 +80,17 @@
       "description": "For whole-repo and folder reviews: if more are needed, Claude asks you how to proceed (most suspicious first, bigger shards, everything, or a narrower folder).",
       "default": 10,
       "min": 1
+    },
+    "depth": {
+      "type": "string",
+      "title": "Review depth",
+      "description": "auto: deep for whole-repo and folder cleanups, normal for pre-push reviews. deep reports small real findings too, folds boilerplate and duplicates across files, trims comment bloat and redundant tests.",
+      "options": [
+        "auto",
+        "normal",
+        "deep"
+      ],
+      "default": "auto"
     }
   }
 }

@@ -124,7 +124,8 @@ flowchart TD
 
 - **Verification.** Claude re-checks every finding. Applying one needs Claude's own confirming search. Rejecting one needs evidence: a `file:line` that uses the code, a test, or your request. When the reviewer was confident and Claude still disagrees, a separate judge decides.
 - **Checks.** Your test or build command runs after each round, and any fix that breaks it is reverted.
-- **Stopping.** Later rounds look only at what earlier fixes orphaned. The loop stops after `max-rounds`, or earlier when a round applies nothing.
+- **Lost behavior.** Later rounds audit the fixes themselves. For every line a fix deleted, the reviewer names the guard, validation or error path it carried and checks that the new code still has it. Anything lost is restored first.
+- **Stopping.** Later rounds look only at what earlier fixes orphaned or lost. The loop stops after `max-rounds`, or earlier when a round applies nothing.
 
 **3. The layer.** This one paragraph is added at session start, and again after `/clear` and compaction:
 
@@ -148,6 +149,20 @@ Most YAGNI reviewers fail the same way: they call code dead because they didn't 
 
 Every search is reported with its match count. If the reviewer finds a concrete sign of a consumer outside the repo, it reports `needs-context` instead of guessing.
 
+Besides over-engineering, the reviewer flags bloat:
+
+- duplicated logic, including copies that drifted apart, where Claude points out the difference instead of silently picking one;
+- boilerplate that a helper or generic would fold away;
+- data reshaped back and forth for no reason (struct → DTO → map → struct);
+- state that can be derived, or copies of state kept in sync by hand;
+- wasted work: the same thing computed, parsed or fetched twice;
+- special cases piled on a shared mechanism that one general rule would replace;
+- code that does by hand what the platform already does, such as a DB constraint or a framework extractor;
+- comments that restate the code;
+- redundant tests.
+
+Comments that explain *why* stay.
+
 **Instructed never to flag:** validation at trust boundaries, security, data-loss error handling, resource cleanup, locks and transactions, migrations, API compatibility shims, observability, accessibility, and anything you asked for.
 
 The reviewer has read-only tools (Read, Grep, Glob) and no shell. It treats text in your repo as evidence, not instructions, and Claude re-verifies every finding before applying it.
@@ -161,14 +176,19 @@ You can also run it by hand at any time, including on your whole codebase:
 /nahuya:polish src/billing/     # review and fix existing code in a folder
 ```
 
-For the whole codebase or a folder, nahuya splits the code into shards of whole files, about 3000 lines each and in directory order. Docs, generated and vendored files are skipped. Each shard gets its own fresh reviewer, so every file gets real attention instead of a skim.
+For the whole codebase or a folder, nahuya plans the run before spending anything:
 
-A run uses at most 10 reviewer subagents by default (`max-agents`). If a codebase needs more, Claude stops and asks before spending anything, and shows the numbers for each choice:
+- **Logical components, not line counts.** `nahuya inventory` builds a cheap map of directories, sizes, tests and build manifests. Claude groups the code by what it does: a feature, a service, a layer. Related code from different folders lands with the same reviewer, which is where duplicates show up. Each component is about 3000 lines (`shard-lines`) and gets its own fresh reviewer. Small targets skip planning. In short, the model plans and shell scripts do the counting.
+- **Only code that ships.** Docs, generated and vendored files are skipped, and so are folders such as `research/`, `examples/`, `benchmarks/`, `fixtures/` and `playground/`. Claude tells you what it skipped, and `--with-nonprod` brings those folders back in.
+- **Tests are your call.** Claude asks whether to include them. If you say yes, redundant tests and copied setup get cleaned up too.
+- **A duplicates pass.** A cheap clone detector scans the whole target for near-identical code across files. One more reviewer then reads both sides of each pair. This catches what a per-shard review can't see, such as two modules built on the same skeleton.
+- **A budget.** By default a run uses at most 10 reviewer subagents (`max-agents`). If it needs more, Claude asks first and shows the numbers for each option:
+  - review the most suspicious components now and the rest as a later batch (`--skip N`);
+  - use fewer, bigger components;
+  - review everything, with a token estimate;
+  - narrow to a folder.
 
-- **Most suspicious first.** A cheap grep ranks shards by over-engineering signals: abstract bases, interfaces, factories, managers, registries, wrappers and generics. The top ones are reviewed now. The rest follow as a next batch with `--skip N`.
-- **Bigger shards.** Everything is fitted into the budget, with a warning about less attention per file.
-- **Everything.** Every shard gets reviewed, with an explicit token estimate.
-- **A narrower folder.** `/nahuya:polish all` (or a folder) applies fixes with the same rules as the pre-push loop and commits them, but it never pushes.
+Cleanup runs are `deep` by default. Small but real findings count, and behavior-preserving changes can span several files, for example extracting shared code or folding boilerplate. `/nahuya:polish all` commits after each shard and pushes only if you ask. The report says how many lines were reviewed, how many were cut, and what wasn't reviewed.
 
 ## Why it won't make Claude worse
 
@@ -205,6 +225,7 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 | `layer` | `on` | `on` / `off` |
 | `shard-lines` | `3000` | lines of code per reviewer in whole-repo and folder runs |
 | `max-agents` | `10` | reviewer subagents per whole-repo or folder run before Claude asks you |
+| `depth` | `auto` | `auto`: `deep` for whole-repo and folder cleanups, `normal` before pushes · `normal` · `deep` |
 
 ```
 /nahuya:config threshold 1000            # this repo
@@ -267,9 +288,14 @@ Yes. Before a push, it removes them from the code being pushed, and on demand fr
 - dead code;
 - interfaces and factories with a single implementation;
 - pass-through wrappers;
-- options and config that nothing varies;
-- reimplementations of the standard library or of helpers you already have;
-- dependencies added for a few lines.
+- options and config that nothing varies, and feature flags stuck on or off;
+- dependencies declared in a manifest that no code imports;
+- `try`/`catch` blocks that only rethrow;
+- reimplementations of the standard library, of helpers you already have, or of what the platform does natively;
+- dependencies added for a few lines;
+- logic duplicated across files, and boilerplate that a helper would fold;
+- comments that restate the code, and stale TODOs;
+- redundant tests and copied test setup, when you include tests.
 
 To clean up existing code, run `/nahuya:polish all` or `/nahuya:polish src/`.
 
@@ -280,7 +306,14 @@ To clean up existing code, run `/nahuya:polish all` or `/nahuya:polish src/`.
 
 <br>
 
-Yes. `/nahuya:review all` gives a report only, and `/nahuya:polish all` reviews and fixes. Pass a folder instead of `all` to narrow either one. Code is split into shards of about 3000 lines, and each shard gets a fresh reviewer. Runs are capped at 10 reviewers by default. On a bigger codebase, Claude asks first: review the most suspicious shards now and the rest in a later batch, use bigger shards, review everything (with a token estimate), or narrow to a folder.
+Yes. `/nahuya:review all` gives a report only, and `/nahuya:polish all` reviews and fixes. Pass a folder instead of `all` to narrow either one.
+
+- **What gets reviewed.** Claude groups the code into logical components of about 3000 lines, and each one gets a fresh reviewer. A clone detector adds a pass for duplicates across files. Folders such as `research/` and `examples/` are skipped. Claude asks whether to include tests.
+- **Budget.** Runs are capped at 10 reviewers by default. On a bigger codebase, Claude asks first:
+  - review the most suspicious shards now and the rest in a later batch;
+  - use fewer, bigger components;
+  - review everything, with a token estimate;
+  - narrow to a folder.
 
 </details>
 
@@ -340,7 +373,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 89 tests; needs only sh, git and awk
+sh tests/run.sh                     # 114 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

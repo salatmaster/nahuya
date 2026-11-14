@@ -18,6 +18,7 @@ nh_default() {
     threshold) echo 500 ;;
     shard_lines) echo 3000 ;;
     max_agents) echo 10 ;;
+    depth) echo auto ;;
     max_rounds) echo 3 ;;
     reviewer_model) echo inherit ;;
     fix_mode) echo commit ;;
@@ -25,7 +26,7 @@ nh_default() {
   esac
 }
 
-NH_KEYS="gate threshold max_rounds reviewer_model fix_mode layer shard_lines max_agents"
+NH_KEYS="gate threshold max_rounds reviewer_model fix_mode layer shard_lines max_agents depth"
 
 # Canonical key from what a user types: max-rounds, MAX_ROUNDS, model, fix-mode.
 nh_key() {
@@ -49,22 +50,14 @@ nh_norm() {
       case $_v in inherit|opus|fable|sonnet|haiku) echo "$_v" ;; *) return 1 ;; esac ;;
     fix_mode)
       case $_v in commit|amend|uncommitted) echo "$_v" ;; *) return 1 ;; esac ;;
+    depth)
+      case $_v in auto|normal|deep) echo "$_v" ;; *) return 1 ;; esac ;;
     *) return 1 ;;
   esac
 }
 
 # Reads a variable by name. Callers only pass names built from validated keys.
 nh_getenv() { eval "printf '%s' \"\${$1-}\""; }
-
-# Plugin-config defaults handed over by a skill: --defaults 'k=v k=v'.
-NH_USER_DEFAULTS=${NH_USER_DEFAULTS-}
-nh_userdefault() {
-  set -f
-  for _kv in $NH_USER_DEFAULTS; do
-    case $_kv in "$1="*) set +f; printf '%s' "${_kv#*=}"; return 0 ;; esac
-  done
-  set +f
-}
 
 # nh_cfg_src KEY -> "value<TAB>source". Precedence:
 # env NAHUYA_* > git config nahuya.* (repo, then global) > plugin userConfig > default.
@@ -80,12 +73,65 @@ nh_cfg_src() {
     printf '%s\tgit config (%s)\n' "$_n" "${_scope:-git}"; return
   fi
   _v=$(nh_getenv "CLAUDE_PLUGIN_OPTION_$_K")
-  [ -n "$_v" ] || _v=$(nh_userdefault "$1")
+  [ -n "$_v" ] || _v=$(nh_plugin_option "$1")
   if [ -n "$_v" ] && _n=$(nh_norm "$1" "$_v"); then printf '%s\tplugin config\n' "$_n"; return; fi
   printf '%s\tdefault\n' "$(nh_default "$1")"
 }
 
 nh_cfg() { nh_cfg_src "$1" | cut -f1; }
+
+# Flatten JSON on stdin into "path<TAB>scalar" lines (object keys joined by "/").
+nh_json_flatten() {
+  LC_ALL=C awk '
+    function ws() { while (P <= N && index(" \t\r\n", substr(S, P, 1))) P++ }
+    function str(   o, c, e) {
+      o = ""; P++
+      while (P <= N) {
+        c = substr(S, P, 1)
+        if (c == "\\") { e = substr(S, P + 1, 1); P += 2
+          if (e == "n") o = o " "; else if (e == "t") o = o " "; else if (e == "u") { o = o "?"; P += 4 } else o = o e
+          continue }
+        if (c == "\"") { P++; return o }
+        o = o c; P++
+      }
+      return o
+    }
+    function val(path,   c, k, v, i) {
+      ws(); c = substr(S, P, 1)
+      if (c == "{") {
+        P++; ws(); if (substr(S, P, 1) == "}") { P++; return }
+        while (P <= N) {
+          ws(); k = str(); ws(); P++
+          val(path == "" ? k : path "/" k)
+          ws(); c = substr(S, P, 1); P++
+          if (c != ",") return
+        }
+        return
+      }
+      if (c == "[") {
+        P++; ws(); i = 0; if (substr(S, P, 1) == "]") { P++; return }
+        while (P <= N) { val(path "/" i++); ws(); c = substr(S, P, 1); P++; if (c != ",") return }
+        return
+      }
+      if (c == "\"") { print path "\t" str(); return }
+      v = ""; while (P <= N && substr(S, P, 1) !~ /[,}\] \t\r\n]/) { v = v substr(S, P, 1); P++ }
+      print path "\t" v
+    }
+    { S = S (NR > 1 ? "\n" : "") $0 }
+    END { N = length(S); P = 1; val("") }'
+}
+
+# Plugin settings saved by /plugin configure (pluginConfigs in settings.json).
+# Skills can't rely on ${user_config.*} substitution, so read them directly.
+nh_plugin_option() {
+  for _sf in "${NH_TOP:+$NH_TOP/.claude/settings.local.json}" "${NH_TOP:+$NH_TOP/.claude/settings.json}" \
+             "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"; do
+    [ -n "$_sf" ] && [ -f "$_sf" ] || continue
+    _pv=$(nh_json_flatten < "$_sf" 2>/dev/null | awk -F'\t' -v k="$1" '
+      index($1, "pluginConfigs/nahuya@") == 1 && $1 ~ ("/options/" k "$") { print $2; exit }')
+    if [ -n "$_pv" ]; then printf '%s' "$_pv"; return 0; fi
+  done
+}
 
 # ---------------------------------------------------------------- repo
 
@@ -209,6 +255,10 @@ nh_is_doc() {
   esac
   return 1
 }
+
+# Directories that usually hold non-production code. Whole-repo runs skip them
+# by default and report what they skipped.
+NH_NONPROD_RE='(^|/)(research|experiments|examples|example|samples|demo|demos|notebooks|bench|benches|benchmarks|fixtures|testdata|test-data|scratch|playground|sandbox|tmp)/'
 
 # .nahuya.md front matter (between the first two --- lines).
 nh_md_front() {
@@ -497,4 +547,38 @@ nh_detect_pushes() {
       NP = 1; PENDING[1] = ENVIRON["NH_CMD"]; PDIR[1] = ""
       for (p = 1; p <= NP && p <= 8; p++) run(PENDING[p], PDIR[p])
     }'
+}
+
+# ---------------------------------------------------------------- clones
+
+# Near-duplicate code across files. stdin: file list (repo-relative), cwd = repo
+# top. Lines are whitespace-normalized; blank, brace-only, comment and import
+# lines are ignored. Prints "len<TAB>fileA<TAB>startA<TAB>endA<TAB>fileB<TAB>startB<TAB>endB",
+# longest first. $1 = minimum normalized lines.
+nh_clones() {
+  _min=${1:-6}
+  while IFS= read -r _f; do
+    [ -f "$_f" ] || continue
+    printf '\001FILE %s\n' "$_f"; cat "$_f"; printf '\n'
+  done | LC_ALL=C awk -v W="$_min" '
+    /^\001FILE / { file = substr($0, 7); ln = 0; nn = 0; next }
+    {
+      ln++; t = $0; gsub(/^[ \t]+|[ \t]+$/, "", t); gsub(/[ \t]+/, " ", t)
+      if (t == "" || t ~ /^[][{}();,]+$/ || t ~ /^(\/\/|#|\/\*|\*|--|<!--)/) next
+      if (t ~ /^(import|use|from|package|require|#include|using|extern crate|mod) /) next
+      nn++; at[file, nn] = ln; txt[nn] = t
+      if (nn < W) next
+      k = txt[nn - W + 1]; for (j = nn - W + 2; j <= nn; j++) k = k "\n" txt[j]
+      if (k in first) {
+        split(first[k], a, SUBSEP)
+        if (a[1] != file || nn - a[2] >= W)
+          printf "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n", a[1], file, nn - a[2], a[2], at[a[1], a[2] - W + 1], at[a[1], a[2]], at[file, nn - W + 1], at[file, nn]
+      } else first[k] = file SUBSEP nn
+    }' | sort -t "$NH_TAB" -k1,1 -k2,2 -k3,3n -k4,4n | awk -F'\t' -v W="$_min" '
+    function flush() { if (have) printf "%d\t%s\t%d\t%d\t%s\t%d\t%d\n", W + last - beg, fa, sa, ea, fb, sb, eb }
+    {
+      if (have && $1 == fa && $2 == fb && $3 == dg && $4 == last + 1) { last = $4; ea = $6; eb = $8; next }
+      flush(); have = 1; fa = $1; fb = $2; dg = $3; beg = $4; last = $4; sa = $5; ea = $6; sb = $7; eb = $8
+    }
+    END { flush() }' | sort -t "$NH_TAB" -k1,1nr
 }

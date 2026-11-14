@@ -1,6 +1,6 @@
 ---
 name: review
-description: Report-only over-engineering review of a range, branch, path or the whole repo. Use when the user asks whether code is over-engineered, bloated or more complex than needed.
+description: Report-only review for over-engineering and bloat of a change, a range, a folder or the whole repo. Use when the user asks whether code is over-engineered, bloated or more complex than needed.
 argument-hint: "[all | folder | base..tip]  default: your unpushed changes"
 allowed-tools: Bash(nahuya *)
 ---
@@ -9,36 +9,71 @@ The target is: $ARGUMENTS (empty means the unreviewed commits plus uncommitted
 changes).
 
 **Range, branch or empty:** run `nahuya diff --target <target>`, which prints a
-diff path. Launch one fresh `nahuya:reviewer` with `mode: review`, `round: 1`,
-the diff path, `ledger: none`, and `requested` if the user said what the code is
-for.
+diff path. If it prints `note=`, pass the note on to the user. Launch one fresh
+`nahuya:reviewer` with `mode: review`, `round: 1`, `depth: normal` (or `deep` if
+the `depth` setting is `deep`), the diff path, `ledger: none`, and `requested` if
+the user said what the code is for.
 
-**`all` (the whole repo) or a folder:** run `nahuya shards --defaults 'shard_lines=${user_config.shard_lines} max_agents=${user_config.max_agents}' <all|folder>` plus any
-flags from the arguments (`--top N`, `--skip K`, `--fit N`, `--max-lines N`). It
-splits the code into shards ranked by over-engineering signals and prints them
-with `shards_total`, `max_agents` and `est_tokens`.
+**`all` (the whole repo) or a folder:** this is a cleanup review, so `depth` is
+`deep` unless the `depth` setting is `normal`.
+1. **Map.** Run `nahuya inventory <all|folder>` plus `--tests`, `--no-tests` or
+   `--with-nonprod` from the arguments. It shows directories with files, lines,
+   tests, over-engineering signals and build manifests, the folders it skipped
+   as non-production, and where to write the plan. If the total fits in
+   `shard-lines`, skip planning: run `nahuya shards <target>` and go to step 3.
+2. **Plan logical components.** Skim the README and the entry points (main,
+   routes, handlers, jobs, CLI commands) to see the real flows. Then group the
+   code by what it does: a feature, a service, a layer, a package. Code that does similar jobs belongs together even
+   when it lives in different directories, because that is where duplication
+   hides. Aim for about `shard-lines` per component and at most twice that; look
+   inside big areas with `nahuya inventory <target> --files <dir>` and split them.
+   Put the components most likely to be over-engineered or bloated first. Put
+   code you'd leave out (one-off research, examples or generated code the filters
+   missed) under a `## skip — <reason>` component. Write the plan to the path
+   `inventory` printed:
 
-Check the budget before launching any reviewer: it is `max_agents`. If the
-selected shards fit, or the arguments already include `--top`, `--skip`,
-`--fit` or `--max-lines`, go ahead. Otherwise don't start: run the same command
-with `--fit <budget>` to learn the shard size that would fit, then ask the user
-to choose, with the numbers:
-- **Most suspicious first:** `--top <budget>`. The rest can follow later with
-  `--skip <budget>`.
-- **Bigger shards:** `--fit <budget>`, at the size you just learned. Above
-  roughly 6000 lines per shard, attention per file drops.
-- **Everything:** all `shards_total` shards, about `est_tokens` tokens. Say
-  plainly that this is expensive.
-- **A narrower folder.**
+       ## liquidation — both liquidators share one skeleton
+       src/liq/
+       src/firm/liquidator.rs
+       ## web api
+       src/web/
+       ## skip — one-off research scripts
+       research/
 
-Then run the command with their choice.
+   A path claims everything under it, and the longest matching path wins. Run
+   `nahuya shards <target> --plan <plan> <flags>` and fix the plan until it
+   reports no `unassigned` lines.
+3. **Ask once, only what is open.** Put the open questions in one message:
+   - **Tests:** unless the arguments say `--tests` or `--no-tests` and the
+     inventory shows tests, ask whether to include them. They get the same
+     cleanup, including redundant tests and copied setup.
+   - **Budget:** count the reviewers: one per component plus one for the duplicates pass. If that exceeds
+     `max_agents` and the arguments have no `--top` or `--skip`, offer:
+     - **most suspicious first:** `--top <budget>`, the rest later with
+       `--skip`;
+     - **fewer, bigger components:** merge components in the plan. Above
+       roughly 6000 lines each, attention per file drops;
+     - **everything:** about `est_tokens` tokens. Say plainly that this
+       is expensive;
+     - **a narrower folder.**
+   - **Left out:** list the skipped folders (`--with-nonprod` includes them) and
+     your `## skip` components with their reasons.
 
-Launch a fresh `nahuya:reviewer` per selected shard with `mode: review`,
-`round: 1`, `files: <shard path>` and `ledger: none`, up to four at a time. If
-shards remain, end by saying how to review the next batch
-(`/nahuya:review <target> --skip N`).
+   Then run the final `nahuya shards` command with the choices.
+4. Launch a fresh `nahuya:reviewer` per selected shard with `mode: review`,
+   `round: 1`, `depth`, `files: <shard path>` and `ledger: none`, up to four at
+   a time.
+5. In `deep`, also run `nahuya clones <same target and test flag>`. If `pairs`
+   is above 0, launch one more reviewer with `clones: <path>`.
 
-Present the findings to the user in plain language, grouped by file, most
-valuable first, keeping locations and evidence. Say that nothing was changed and
-that these are unverified proposals. Apply one only if the user asks, and verify
-it first; for many, suggest `/nahuya:polish <same target>`.
+Present the findings to the user in plain language, grouped by file, biggest
+saving first, keeping locations and evidence. Number them across all groups so
+the user can say "apply 2 and 5". Then add:
+- the total: `-N lines, -M dependencies possible`;
+- the lines reviewed;
+- what wasn't reviewed (remaining components with the next-batch command,
+  skipped folders, `## skip` components, excluded tests).
+
+Say that nothing was changed and that these are unverified proposals. Apply
+findings only when the user asks ("apply 2 and 5"), and verify each one first. For many findings, suggest
+`/nahuya:polish <same target>`.

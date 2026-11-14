@@ -13,7 +13,7 @@ eq() { if [ "$2" = "$3" ]; then ok; else bad "$1: expected [$3], got [$2]"; fi; 
 
 # Isolate from the user's git config and nahuya env.
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/nahuya-test.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+trap '[ -n "$KEEP" ] || rm -rf "$WORK"' EXIT
 export HOME="$WORK/home" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 mkdir -p "$HOME"
 git config --global init.defaultBranch main
@@ -152,6 +152,7 @@ d1=$(printf '%s\n' "$out" | sed -n 's/^diff=//p')
 [ -s "$d1" ] && ok || bad "round 1 diff empty"
 grep -q 'src/f2.py' "$d1" && ok || bad "round 1 diff misses own change"
 grep -q 'src/other.py' "$d1" && bad "round 1 diff includes merged main code" || ok
+[ -f "$(sh "$NAHUYA" status | sed -n 's/^ledger=//p' | sed 's/ (.*//')" ] && ok || bad "ledger created at round 1"
 sh "$NAHUYA" log 1 applied dead-code "src/f2.py:thing" "removed it" >/dev/null || bad "log failed"
 sh "$NAHUYA" log 1 rejected pass-through "src/f.py:x" "used by router: src/r.py:3" >/dev/null
 sed -i.bak '1,50d' src/f2.py && rm -f src/f2.py.bak
@@ -160,13 +161,25 @@ d2=$(printf '%s\n' "$out" | sed -n 's/^diff=//p')
 grep -q '^-line 1$' "$d2" && ok || bad "round 2 delta missing fix"
 grep -q 'src/f.py' "$d2" && bad "round 2 delta not limited to fixes" || ok
 commit fixes
-eq "status shows rounds" "$(sh "$NAHUYA" status --defaults 'max_rounds=5' | sed -n 's/^max_rounds=//p')" 5
+eq "status shows rounds" "$(NAHUYA_MAX_ROUNDS=5 sh "$NAHUYA" status | sed -n 's/^max_rounds=//p')" 5
 sh "$NAHUYA" mark >/dev/null
 sh "$NAHUYA" stats | grep -q 'applied rate: 50%' && ok || bad "stats: $(sh "$NAHUYA" stats)"
 eq "run records size at loop start" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 600
 eq "after loop push passes" "$(hook 'git push -u origin feat' "$R")" 0
+git push -q -u origin feat 2>/dev/null
+sh "$NAHUYA" diff --target | grep -q '^note=nothing unreviewed' && ok || bad "review falls back to last commit"
 
 sh "$NAHUYA" diff --target src/a.py >/dev/null 2>&1 && bad "path accepted by diff --target" || ok
+
+# plugin settings saved by /plugin configure
+mkdir -p "$HOME/.claude"
+printf '{"pluginConfigs":{"nahuya@nahuya":{"options":{"threshold":1200,"gate":true}}}}' > "$HOME/.claude/settings.json"
+sh "$NAHUYA" config | grep -q 'threshold *1200 *(plugin config)' && ok || bad "plugin settings: $(sh "$NAHUYA" config)"
+NAHUYA_THRESHOLD=300 sh "$NAHUYA" config | grep -q 'threshold *300 *(env' && ok || bad "env beats plugin settings"
+rm -f "$HOME/.claude/settings.json"
+sh "$NAHUYA" config depth deep >/dev/null; eq "depth setting" "$(git config nahuya.depth)" deep
+sh "$NAHUYA" config depth extreme >/dev/null 2>&1 && bad "bad depth accepted" || ok
+git config --unset nahuya.depth
 
 # config command
 sh "$NAHUYA" config threshold 900 >/dev/null
@@ -186,8 +199,8 @@ out=$(sh "$NAHUYA" shards . --max-lines 500)
 eq "shard count" "$(printf '%s\n' "$out" | sed -n 's/^shards_total=//p')" 4
 eq "shard lines" "$(printf '%s\n' "$out" | sed -n 's/^lines=//p')" 2100
 printf '%s\n' "$out" | grep -q NOTES && bad "docs not skipped" || ok
-grep -q 'vendor/' .git/nahuya/shards/*.txt && bad "vendor not skipped" || ok
-grep -q '^lib/a.py (400 lines)$' .git/nahuya/shards/shard-*.txt && ok || bad "shard manifest"
+grep -q 'vendor/' .git/nahuya/shards/*/*.txt && bad "vendor not skipped" || ok
+grep -q '^lib/a.py (400 lines)$' .git/nahuya/shards/*/shard-*.txt && ok || bad "shard manifest"
 eq "all keyword" "$(cd lib && sh "$NAHUYA" shards all --max-lines 500 | sed -n 's/^lines=//p')" 2100
 out=$(sh "$NAHUYA" shards . --max-lines 500 --top 2)
 eq "top limits selection" "$(printf '%s\n' "$out" | sed -n 's/^shards_selected=//p')" 2
@@ -195,7 +208,7 @@ printf '%s\n' "$out" | grep -q '^remaining=2 (next batch: --skip 2)$' && ok || b
 eq "skip takes the rest" "$(sh "$NAHUYA" shards . --max-lines 500 --skip 2 | sed -n 's/^shards_selected=//p')" 2
 eq "fit packs into budget" "$(sh "$NAHUYA" shards . --fit 2 | sed -n 's/^shards_total=//p')" 2
 eq "shard_lines from config" "$(NAHUYA_SHARD_LINES=900 sh "$NAHUYA" shards . | sed -n 's/^shard_lines=//p')" 900
-eq "max_agents from defaults" "$(sh "$NAHUYA" shards . --defaults 'max_agents=4' | sed -n 's/^max_agents=//p')" 4
+eq "max_agents from env" "$(NAHUYA_MAX_AGENTS=4 sh "$NAHUYA" shards . | sed -n 's/^max_agents=//p')" 4
 eq "explicit doc file" "$(sh "$NAHUYA" shards NOTES.md | sed -n 's/^files=//p')" 1
 printf 'class FooFactory:\n    pass\nclass BarManager:\n    pass\n' > lib/zz_factory.py; commit sig
 eq "suspicious shard ranks first" "$(sh "$NAHUYA" shards lib --max-lines 10 | head -1 | sed 's/.*signals=//')" 2
@@ -210,6 +223,39 @@ before=$(cat .git/nahuya/anchors/main 2>/dev/null)
 commit trim; sh "$NAHUYA" mark --keep-anchor >/dev/null
 eq "keep-anchor leaves anchor" "$(cat .git/nahuya/anchors/main 2>/dev/null)" "$before"
 eq "whole run recorded" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 800
+# per-target shard dirs, non-prod folders, tests, module packing, clones
+sh "$NAHUYA" shards lib >/dev/null; sh "$NAHUYA" shards all >/dev/null
+[ -d .git/nahuya/shards/lib ] && [ -d .git/nahuya/shards/all ] && ok || bad "per-target shard dirs"
+lines research/r.py 300; commit research
+out=$(sh "$NAHUYA" shards all)
+printf '%s\n' "$out" | grep -q '^skipped_nonprod=research/ (300 lines' && ok || bad "nonprod skipped: $out"
+grep -q 'research/' .git/nahuya/shards/all/*.txt && bad "research reviewed" || ok
+sh "$NAHUYA" shards all --with-nonprod | grep -q '^lines=2390$' && ok || bad "with-nonprod"
+lines tests/test_x.py 120; commit t
+sh "$NAHUYA" shards all | grep -q '^test_lines=120 in 1 files' && ok || bad "test lines reported"
+sh "$NAHUYA" shards all --no-tests | grep -q '^lines=2090$' && ok || bad "no-tests"
+sh "$NAHUYA" shards all --no-tests --max-lines 850 >/dev/null
+grep -l 'lib/a.py' .git/nahuya/shards/all/*.txt | xargs grep -q 'lib/b.py' && ok || bad "module kept together"
+awk 'BEGIN { for (i = 1; i <= 12; i++) printf "total = total + value_%d * weight\n", i }' > lib/dup1.py
+cp lib/dup1.py web/dup2.py; commit dup
+out=$(sh "$NAHUYA" clones all --no-tests)
+[ "$(printf '%s\n' "$out" | sed -n 's/^pairs=//p')" -ge 1 ] && ok || bad "clone pairs: $out"
+grep -q 'lib/dup1.py:1-12  <->  web/dup2.py:1-12' .git/nahuya/shards/all/clones.txt && ok || bad "clone ranges: $(cat .git/nahuya/shards/all/clones.txt)"
+# inventory and plans
+out=$(sh "$NAHUYA" inventory all --no-tests)
+printf '%s\n' "$out" | grep -q '^lib/  files=' && ok || bad "inventory dirs: $out"
+printf '%s\n' "$out" | grep -q 'shards/all/plan.md' && ok || bad "inventory plan path"
+sh "$NAHUYA" inventory all --files lib/ | grep -q '^  lib/a.py  lines=' && ok || bad "inventory --files"
+printf 'x\n' > Cargo.toml; commit manifest
+sh "$NAHUYA" inventory all | grep -q '^x.py  lines=' && ok || bad "root files listed"
+git ls-files | grep -q Cargo.toml && sh "$NAHUYA" inventory all | head -1 | grep -q 'inventory:' && ok || bad "inventory header"
+printf '## core\nlib/\nweb/dup2.py\n## web\nweb/\n## skip: scratch\nx.py\n' > plan.md
+out=$(sh "$NAHUYA" shards all --no-tests --plan plan.md)
+printf '%s\n' "$out" | grep -q 'component=core$' && ok || bad "plan component: $out"
+grep -q 'web/dup2.py' .git/nahuya/shards/all/shard-1.txt && ok || bad "longest match wins"
+printf '%s\n' "$out" | grep -q '^planned_skip=skip: scratch (900 lines' && ok || bad "planned skip"
+printf '%s\n' "$out" | grep -q '^unassigned=' && ok || bad "unassigned reported"
+sh "$NAHUYA" shards all --plan plan.md --fit 2 >/dev/null 2>&1 && bad "fit with plan accepted" || ok
 cd "$R" || exit 1
 
 # session start layer
