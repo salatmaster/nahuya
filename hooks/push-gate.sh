@@ -25,6 +25,13 @@ gate() (
   nh_resolve_tip "$2" || exit 0
   anchor=$(nh_anchor "$NH_TIP" "$NH_BRANCH") || exit 0
   added=$(nh_count_added "$anchor" "$NH_TIP" "$NH_BRANCH")
+  # The hook runs before the command, so in `git commit … && git push` the commit
+  # doesn't exist yet. Count the work that command is about to commit too.
+  pending=0
+  case $cmd in
+    *commit*) [ "$NH_TIP" = "$(git rev-parse -q --verify HEAD 2>/dev/null)" ] && pending=$(nh_count_uncommitted) ;;
+  esac
+  added=$((${added:-0} + ${pending:-0}))
   threshold=$(nh_cfg threshold)
   [ "${added:-0}" -ge "$threshold" ] 2>/dev/null || exit 0
 
@@ -43,7 +50,7 @@ gate() (
   printf '%s %s\n' "$NH_TIP" "$((count + 1))" > "$NH_STATE/blocks"
 
   cat >&2 <<EOF
-nahuya: push blocked, nothing in this command ran. $added unreviewed added lines of non-test code since $(nh_short "$anchor") (threshold $threshold).
+nahuya: push blocked, nothing in this command ran. $added unreviewed added lines of non-test code since $(nh_short "$anchor")$([ "$pending" -gt 0 ] && echo ", $pending of them not committed yet") (threshold $threshold).
 Commit anything the blocked command was going to commit, then run the nahuya:polish skill with no arguments. It re-runs the push when it finishes.
 Skipping review is the user's call (/nahuya:skip), so don't work around the gate. If you are a subagent, stop and report this to your caller.
 EOF

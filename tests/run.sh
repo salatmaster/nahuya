@@ -80,6 +80,13 @@ git remote set-head origin main >/dev/null 2>&1
 eq "non-git command passes" "$(hook 'ls -la' "$R")" 0
 eq "nothing unpushed passes" "$(hook 'git push' "$R")" 0
 
+# commit and push in one command: the hook runs before the commit exists
+lines src/wip.py 600
+eq "commit-and-push counts what it commits" "$(hook 'git add -A && git commit -qm wip && git push' "$R")" 2
+grep -q '600 of them not committed yet' "$WORK/out" && ok || bad "pending lines named: $(cat "$WORK/out")"
+eq "plain push ignores uncommitted work" "$(hook 'git push' "$R")" 0
+rm -f src/wip.py; rm -f .git/nahuya/blocks
+
 lines src/app.py 600; commit big
 eq "600 lines blocks" "$(hook 'git push' "$R")" 2
 grep -q 'push blocked, nothing in this command ran. 600 unreviewed' "$WORK/out" && ok || bad "block message: $(cat "$WORK/out")"
@@ -291,6 +298,7 @@ sh "$NAHUYA" shards all --only-tests >/dev/null 2>&1 && bad "shards replaced und
 sh "$NAHUYA" shards all >/dev/null 2>&1 && ok || bad "other run's shards blocked"
 sh "$NAHUYA" status tests all | grep -q '^scope=tests-only' && ok || bad "status tests all: $(sh "$NAHUYA" status tests all 2>&1)"
 sh "$NAHUYA" status --only-tests >/dev/null 2>&1 && ok || bad "status --only-tests"
+sh "$NAHUYA" status tests all --prune-tests >/dev/null 2>&1 && ok || bad "status takes the test flags"
 sh "$NAHUYA" mark --keep-anchor >/dev/null
 sh "$NAHUYA" shards all --only-tests >/dev/null 2>&1 && ok || bad "shards after the run ended"
 git rm -q -r crate spec lib/fixtures_builder.py; commit unrust

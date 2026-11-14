@@ -6,6 +6,14 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The push gate missed a push made in the same command as the commit (`git commit … && git push`),
+  the way Claude usually pushes. The hook runs before the command, when that commit doesn't exist
+  yet, so the new lines weren't counted. When a command commits before it pushes, the gate now
+  counts the work it is about to commit.
+- `nahuya status` no longer fails on `--prune-tests` and the other test flags the skills pass along.
+
 ## [0.6.1] - 2026-11-14
 
 ### Changed

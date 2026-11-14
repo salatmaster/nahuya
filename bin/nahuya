@@ -55,6 +55,7 @@ cmd_status() {
   for _a in "$@"; do
     case $_a in
       --only-tests) export NH_ONLY_TESTS=1 ;;
+      --tests|--no-tests|--prune-tests|--with-nonprod|--loop) ;;  # whole-repo flags the skills may pass along
       tests) if git rev-parse -q --verify "tests^{commit}" >/dev/null 2>&1; then _range=$_a; else export NH_ONLY_TESTS=1; fi ;;
       *) if [ "$_a" = all ] || { [ -e "$_a" ] && ! git rev-parse -q --verify "$_a^{commit}" >/dev/null 2>&1; }; then _target=$_a; else _range=$_a; fi ;;
     esac

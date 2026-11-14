@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
-    <img src="assets/banner-light.svg" alt="nahuya Claude Code plugin: over-engineering reviewer. A diff where a one-implementation factory, base class and retry wrapper are replaced by a single line, while a route handler and an operator setting are left untouched." width="100%">
+    <img src="assets/banner-light.svg" alt="nahuya: the over-engineering reviewer for Claude Code. Beside the wordmark, before and after: eleven lines of Rust (a Parity trait, its only implementation and a factory that boxes it) just to call parity.is_even(n) become one line, if n % 2 == 0, because the trait has one implementation and one caller." width="100%">
   </picture>
 </p>
 
@@ -11,8 +11,8 @@
 
 <p align="center">
   <a href="https://github.com/salatmaster/nahuya/actions/workflows/test.yml"><img src="https://github.com/salatmaster/nahuya/actions/workflows/test.yml/badge.svg" alt="Tests on Linux, macOS and Windows"></a>
+  <a href="https://github.com/salatmaster/nahuya/releases"><img src="https://img.shields.io/github/v/release/salatmaster/nahuya?color=d97757" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
-  <a href="#install"><img src="https://img.shields.io/badge/Claude%20Code-plugin-d97757" alt="Claude Code plugin"></a>
   <img src="https://img.shields.io/badge/tuned%20for-Opus%205.5%20%C2%B7%20Fable%205.2-6e56cf" alt="Tuned for Claude Opus 5.5 and Fable 5.2">
   <img src="https://img.shields.io/badge/dependencies-none%20(POSIX%20sh)-2ea44f" alt="No dependencies: POSIX sh, awk and git">
 </p>
@@ -29,15 +29,38 @@
 
 **nahuya** is a [Claude Code](https://code.claude.com) plugin that stops AI over-engineering. When Claude is about to push a large change (500+ new lines by default), nahuya runs an AI code review. The review removes abstractions, layers, options and dependencies that nothing needs, and it proves code is unused before cutting it. nahuya adds no rules that limit how the model thinks or writes.
 
-<p align="center"><sub><i>на*уя?</i> is Russian slang for "what the hell is this for?"</sub></p>
+<p align="center">
+  <img src="assets/demo-1-gate.svg" alt="A real Claude Code session: asked to add discount codes and push, Claude runs git commit and git push in one command; the nahuya gate blocks 113 unreviewed lines, Claude runs nahuya:polish, a fresh reviewer finds nothing to cut, and the push goes through." width="100%">
+</p>
+<p align="center"><sub>A real session with Claude Opus 5.5, replayed from a terminal recording with the waits shortened. The threshold was lowered to 80 lines for the demo; the default is 500. More sessions <a href="#see-it-work">below</a>.</sub></p>
 
-The plugin has three parts:
+<table>
+<tr>
+<td width="33%" valign="top">
 
-- **A reviewer that checks before it cuts.** It never calls code "unused" without a repo-wide search. It also looks where frameworks hide callers: decorators, DI, routes, reflection, serialization and public API.
-- **A review-and-fix loop before big pushes.** It starts on its own, with no CLAUDE.md edits. Claude re-checks every finding and must back each rejection with evidence. An independent judge settles disputes.
-- **A one-paragraph disclosure layer.** It has no rules about thinking, no forced terseness and no reminder on every prompt. Claude lists what it added beyond the task, and you decide what stays.
+**A reviewer that checks before it cuts**
 
-The plugin costs about 250 tokens of standing context per session.
+It never calls code "unused" without a repo-wide search, and it looks where frameworks hide callers: decorators, DI, routes, reflection, serialization and public API.
+
+</td>
+<td width="33%" valign="top">
+
+**A review-and-fix loop before big pushes**
+
+It starts on its own, with no CLAUDE.md edits. Claude re-checks every finding and backs each rejection with evidence. A judge settles disputes.
+
+</td>
+<td width="33%" valign="top">
+
+**A one-paragraph disclosure layer**
+
+No rules about thinking, no forced terseness, no reminder on every prompt. Claude lists what it added beyond the task, and you decide what stays.
+
+</td>
+</tr>
+</table>
+
+<p align="center"><sub><i>на*уя?</i> is Russian slang for "what the hell is this for?" · about 250 tokens of standing context per session</sub></p>
 
 ## Install
 
@@ -52,59 +75,36 @@ It works right away. nahuya is plain POSIX `sh`, `awk` and `git`, with no Node, 
 
 ## See it work
 
+Every animation here is a real session with Claude Opus 5.5, recorded in a terminal and replayed frame by frame with the waits shortened. What you see is what Claude Code drew.
+
+**Push gate** (top of the page). Asked to add discount codes and push, Claude writes the feature and runs `git commit … && git push`. The gate blocks 113 unreviewed lines, Claude runs `/nahuya:polish`, a fresh reviewer finds nothing worth cutting, and the push goes through unchanged. Claude also lists what it added beyond the task (`added: …`).
+
+**Whole-repo cleanup.** `/nahuya:polish all` on a 40k-line Minecraft mod. Claude plans 12 components, asks about tests and the reviewer budget, and cleans up the 7 most suspicious in 13 commits: 21,901 lines reviewed, net −190 lines, all 218 game tests green. This run has no terminal recording, so the scene is rebuilt from its session transcript.
+
 <p align="center">
-  <img src="assets/demo.svg" alt="nahuya in Claude Code: the push gate blocks git push for 105 unreviewed lines, Claude runs nahuya:polish, two fresh reviewer subagents run, Claude verifies and removes a one-implementation notifier abstraction, a factory, a retry wrapper and unused options, commits the cleanup and pushes." width="100%">
+  <img src="assets/demo-2-cleanup.svg" alt="Whole-repo cleanup of a 40k-line Minecraft mod: Claude maps the repo, asks whether to include tests and how to fit the reviewer budget, runs reviewers per component, commits each cleanup, and reports net -190 lines with all 218 game tests green." width="100%">
 </p>
 
-<p align="center"><sub>A replay of a real run with Claude Opus 5.5 on a small demo repo, condensed. The threshold was lowered to 50 lines for the demo; the default is 500.</sub></p>
+**Test cleanup.** Claude without nahuya was asked for a thorough suite for a small billing module and wrote 98 tests. `/nahuya:polish tests all --prune-tests` keeps 75 of them: −113 lines, checks green, no production code touched.
 
-<details>
-<summary>Text version</summary>
+<p align="center">
+  <img src="assets/demo-3-tests.svg" alt="Test cleanup: 98 generated tests pruned to 75 with nahuya:polish tests all --prune-tests, 113 lines removed, all checks green, production code untouched." width="100%">
+</p>
 
-```text
-> I added a welcome email on signup. Push it to origin main.
+**Report-only review.** `/nahuya:review` on a commit with a one-implementation notifier hierarchy, a retry wrapper and an options-laden formatter: 3 findings, about −40 lines, each with its searches. Nothing is changed until you say which to apply.
 
-● Bash(git push origin main)
-  ⎿ nahuya: push blocked, nothing in this command ran. 105 unreviewed
-    added lines of non-test code since bcdc6c6 (threshold 50).
-    … then run the nahuya:polish skill with no arguments.
-
-● Skill(nahuya:polish)
-● nahuya:reviewer(Round 1 over-engineering review)
-  ⎿ Done (8 tool uses · 16.8k tokens · 41.8s)
-● Claude re-runs the decisive searches, applies 5 findings, checks pass
-● nahuya:reviewer(Round 2 over-engineering review)
-  ⎿ Done (6 tool uses · 12.4k tokens · 13.2s)
-● Bash(git commit … ) ⎿ nahuya: f462c83 marked as reviewed
-● Bash(git push origin main) ⎿ bcdc6c6..f462c83  main -> main
-
-Applied: Notifier ABC + EmailNotifier (one implementation, no seam),
-NotifierFactory (registry only ever holds "email"), send_with_retry
-(send() can't fail), format_message options (never passed), plugin hook
-(result discarded). Rejected: none. WELCOME_SENDER and /health untouched.
-```
-
-</details>
-
-The demo repo also contained two traps: a `/health` handler that is reached only through a route table, and a setting that operators change in `deploy/app.env`. The reviewer left both alone. The fixes landed as one plain cleanup commit on top of yours, and nothing already pushed was rewritten.
+<p align="center">
+  <img src="assets/demo-4-review.svg" alt="Report-only review: nahuya:review finds a one-implementation notifier class layer, a retry wrapper around a call that can't fail, and a formatter whose options nobody passes; about -40 lines, nothing changed." width="100%">
+</p>
 
 ## How the pre-push review works
 
-```mermaid
-flowchart TD
-    A["Claude runs git push / gh pr create"] --> B{"unreviewed lines ≥ threshold?"}
-    B -- no --> Z["push goes through"]
-    B -- yes --> C["push blocked: run nahuya:polish"]
-    C --> D["fresh reviewer subagent (read-only)"]
-    D --> E{"Claude verifies each finding"}
-    E -- confirmed --> F["apply, run checks, revert what breaks"]
-    E -- "rejected with evidence" --> G["independent judge, if the reviewer was sure"]
-    E -- "can't tell" --> H["needs-context: asks you"]
-    F --> I{"new findings and rounds left?"}
-    G --> I
-    I -- yes --> D
-    I -- no --> J["commit fixes, mark reviewed, push"]
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/flow-dark.svg">
+    <img src="assets/flow-light.svg" alt="How the pre-push review works: Claude pushes; the gate counts unreviewed lines and lets small pushes through; over the threshold the push is blocked and a fresh read-only reviewer runs; Claude verifies each finding and applies it, rejects it with evidence (a judge settles confident disputes), or brings it to you; the next round audits the fixes for lost behavior; the loop ends with a cleanup commit and the push." width="100%">
+  </picture>
+</p>
 
 **1. The gate.** A hook watches the shell commands Claude runs. It blocks a push when the code added since the last review crosses the threshold. The count runs across any number of pushes, so splitting a feature into small pushes doesn't get around it.
 
@@ -115,7 +115,7 @@ flowchart TD
 
 - **Recognized as a push:** `git push` and `gh pr create`. This includes pushes inside chains (`commit && push`), subshells and `bash -c`, behind `git -C` or `cd`, and through git aliases.
 - **Ignored:** dry runs, deletions and tag-only pushes.
-- **Counted:** added lines of non-test, non-generated code since the last completed review. Deletions don't count.
+- **Counted:** added lines of non-test, non-generated code since the last completed review. When the same command commits first (`git commit … && git push`), the work it is about to commit counts too. Deletions don't count.
 - **Excluded:** tests (including Rust modules declared under `#[cfg(test)]`), lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and code merged in from your main branch.
 
 </details>
@@ -344,7 +344,7 @@ No. nahuya has no rules about thinking, reply length, prose style or how files a
 
 <br>
 
-About 250 tokens of standing context per session: the layer plus three short descriptions. The loop runs only when unreviewed code crosses the threshold. In the demo above, a 105-line change took two rounds on Opus 5.5 and cost about $0.52 at API prices, mostly in cached reads.
+About 250 tokens of standing context per session: the layer plus three short descriptions. The loop runs only when unreviewed code crosses the threshold. On a small demo repo, a 105-line change took two rounds on Opus 5.5 and cost about $0.52 at API prices, mostly in cached reads.
 
 </details>
 
@@ -386,7 +386,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 159 tests; needs only sh, git and awk
+sh tests/run.sh                     # 163 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

@@ -472,6 +472,18 @@ nh_count_added() {
   rm -f "$_ns"
 }
 
+# Added lines of kept, non-test files in uncommitted work (tracked and untracked,
+# minus ignored), compared with HEAD.
+nh_count_uncommitted() {
+  _tree=$(nh_snapshot) || { echo 0; return; }
+  _ns=$(git -c core.quotePath=false diff --numstat --no-renames HEAD "$_tree" 2>/dev/null)
+  _kept=$(printf '%s\n' "$_ns" | awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' | nh_keep count)
+  printf '%s\n' "$_ns" | NH_KEPT=$_kept awk -F'\t' '
+    BEGIN { n = split(ENVIRON["NH_KEPT"], k, "\n"); for (i = 1; i <= n; i++) ok[k[i]] = 1 }
+    NF >= 3 && $1 != "-" && ($3 in ok) { s += $1 }
+    END { print s + 0 }'
+}
+
 # ---------------------------------------------------------------- diffs
 
 # Snapshot of the working tree (tracked + untracked, minus ignored) as a tree id.
