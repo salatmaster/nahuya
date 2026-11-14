@@ -6,6 +6,8 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-14
+
 ### Changed
 
 - `/nahuya:skip` now skips review of everything up to the current commit, the way a finished
@@ -96,7 +98,8 @@ All notable changes to nahuya are documented here. The format follows
 First public release: the push gate, the review-and-fix loop, the report-only reviewer and the
 disclosure layer.
 
-[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.6.0...HEAD
+[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/salatmaster/nahuya/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/salatmaster/nahuya/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/salatmaster/nahuya/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/salatmaster/nahuya/compare/v0.3.0...v0.4.0
