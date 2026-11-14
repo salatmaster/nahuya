@@ -115,8 +115,8 @@ Every animation here is a real session with Claude Opus 5.5, recorded in a termi
 
 - **Recognized as a push:** `git push` and `gh pr create`. This includes pushes inside chains (`commit && push`), subshells and `bash -c`, behind `git -C` or `cd`, and through git aliases.
 - **Ignored:** dry runs, deletions and tag-only pushes.
-- **Counted:** added lines of non-test, non-generated code since the last completed review. When the same command commits first (`git commit … && git push`), the work it is about to commit counts too. Deletions don't count.
-- **Excluded:** tests (including Rust modules declared under `#[cfg(test)]`), lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and code merged in from your main branch.
+- **Counted:** added lines of your own code since the last completed review. When the same command commits first (`git commit … && git push`), the work it is about to commit counts too. Deletions don't count.
+- **Excluded:** tests (including Rust modules declared under `#[cfg(test)]`), docs and data (Markdown, text, JSON, YAML, TOML, XML, configs, HTML/CSS, SVG), lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and other people's code: what came from your main branch, merged in or rebased onto, and on main itself, pulled commits by other authors. Commits already reviewed stay reviewed after a rebase; an amended or squashed commit counts again.
 
 </details>
 
@@ -380,13 +380,13 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 - Changes under the threshold (500 lines by default) are never reviewed automatically. Run `/nahuya:review` on those.
 - A whole-repo run costs roughly one reviewer per 3000 lines, plus verification. The `max-agents` budget keeps that in check.
 - It doesn't see pushes made outside Claude. It also doesn't see shell aliases such as `gp` that exist only in your interactive shell; git aliases do work.
-- "Lines since the last review" is approximate. After a rebase it resets to your upstream or merge-base.
+- "Lines since the last review" is approximate: a rebase that changes a reviewed commit's patch, and every amend or squash, makes that commit count again.
 - The reviewer can be wrong. That's why every finding is re-verified, rejections need evidence, and anything uncertain comes to you.
 
 ## Development
 
 ```
-sh tests/run.sh                     # 163 tests; needs only sh, git and awk
+sh tests/run.sh                     # 172 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

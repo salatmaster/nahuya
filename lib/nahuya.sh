@@ -197,6 +197,10 @@ nh_anchor() {
     if [ -n "$_a" ] && git merge-base --is-ancestor "$_a" "$1" 2>/dev/null; then
       echo "$_a"; return 0
     fi
+    # History was rewritten (rebase, amend, reset): carry the anchor over.
+    if [ -n "$_a" ] && _a=$(nh_rewritten_anchor "$_a" "$1"); then
+      printf '%s\n' "$_a" > "$_f"; echo "$_a"; return 0
+    fi
   fi
   _a=$(nh_fallback_base "$1" "$2") || return 1
   [ -n "$_a" ] || return 1
@@ -204,18 +208,55 @@ nh_anchor() {
   echo "$_a"
 }
 
+# Where an anchor ($1) that is no longer in tip's ($2) history ended up. Start
+# after the history both share, or after the default branch if tip was rebased
+# onto it, then step over the commits that are copies of reviewed ones (same
+# patch). Amended or squashed commits have a new patch and count again.
+nh_rewritten_anchor() {
+  git rev-parse -q --verify "$1^{commit}" >/dev/null 2>&1 || return 1
+  _lim=$(git merge-base "$1" "$2" 2>/dev/null)
+  [ -n "$_lim" ] || return 1
+  if _d=$(nh_default_ref) && _md=$(git merge-base "$_d" "$2" 2>/dev/null) && [ -n "$_md" ] &&
+     git merge-base --is-ancestor "$_lim" "$_md" 2>/dev/null; then
+    _lim=$_md
+  fi
+  _r=$(git cherry "$1" "$2" "$_lim" 2>/dev/null | awk '$1 != "-" { exit } { last = $2 } END { print last }')
+  echo "${_r:-$_lim}"
+}
+
 nh_has_merges() { git rev-list --merges -n 1 "$1..$2" 2>/dev/null | grep -q .; }
 
-# Base for the review diff. If the default branch was merged in after the anchor,
-# diff from the merge-base so other people's merged code isn't reviewed as ours.
+# Base for the review diff. Off the default branch, start where the branch left it
+# (after a merge of it or a rebase onto it) so other people's code isn't reviewed as ours.
 nh_review_base() {
-  if nh_has_merges "$1" "$2" && ! nh_is_trunk "$3" && _d=$(nh_default_ref); then
+  if ! nh_is_trunk "$3" && _d=$(nh_default_ref); then
     _mb=$(git merge-base "$_d" "$2" 2>/dev/null)
     if [ -n "$_mb" ] && git merge-base --is-ancestor "$1" "$_mb" 2>/dev/null; then
       echo "$_mb"; return
     fi
   fi
   echo "$1"
+}
+
+# Commits in $1..$2 (branch $3) that aren't our work: off the default branch, the
+# ones it already has (local or remote); on it, pulled commits by other authors.
+nh_theirs() {
+  _d=$(nh_default_ref) || return 0
+  if nh_is_trunk "$3"; then
+    _me=$(git var GIT_AUTHOR_IDENT 2>/dev/null | sed -n 's/.*<\(.*\)>.*/\1/p')
+    [ -n "$_me" ] || return 0
+    _own=$(git rev-list --no-merges "$1..$2" --not "$_d" 2>/dev/null)
+    git log --no-merges --format='%H %ae' "$1..$2" 2>/dev/null | NH_OWN=$_own NH_ME=$_me awk '
+      BEGIN { n = split(ENVIRON["NH_OWN"], a, "\n"); for (i = 1; i <= n; i++) own[a[i]] = 1; me = tolower(ENVIRON["NH_ME"]) }
+      !($1 in own) && tolower($2) != me { print $1 }'
+  else
+    _lb=${_d#*/}
+    git show-ref --verify -q "refs/heads/$_lb" && _lb=refs/heads/$_lb || _lb=
+    _own=$(git rev-list --no-merges "$1..$2" --not "$_d" $_lb 2>/dev/null)
+    git rev-list --no-merges "$1..$2" 2>/dev/null | NH_OWN=$_own awk '
+      BEGIN { n = split(ENVIRON["NH_OWN"], a, "\n"); for (i = 1; i <= n; i++) own[a[i]] = 1 }
+      !($0 in own)'
+  fi
 }
 
 # ---------------------------------------------------------------- file filters
@@ -248,7 +289,7 @@ nh_is_test() {
 # Data and markup. Never test code, even under tests/ or spec/.
 nh_is_data() {
   case $1 in
-    *.json|*.jsonc|*.json5|*.yaml|*.yml|*.xml|*.csv|*.tsv|*.toml|*.ini|*.txt|*.lock|*.snap|\
+    *.json|*.jsonc|*.json5|*.yaml|*.yml|*.xml|*.csv|*.tsv|*.toml|*.ini|*.cfg|*.conf|*.properties|*.txt|*.lock|*.snap|\
     *.html|*.htm|*.css|*.scss|*.svg|*.md|*.mdx|*.rst|\
     *.JSON|*.YAML|*.YML|*.XML|*.CSV|*.HTML|*.MD)
       return 0 ;;
@@ -356,7 +397,7 @@ nh_rust_tests() {
 nh_is_doc() {
   case $1 in
     *.md|*.mdx|*.markdown|*.rst|*.adoc|*.txt|*.svg|\
-    LICENSE*|*/LICENSE*|COPYING*|*/COPYING*|NOTICE*|*/NOTICE*|CHANGELOG*|*/CHANGELOG*|\
+    README|*/README|LICENSE*|*/LICENSE*|COPYING*|*/COPYING*|NOTICE*|*/NOTICE*|CHANGELOG*|*/CHANGELOG*|\
     .gitignore|*/.gitignore|.gitattributes|*/.gitattributes|.editorconfig|*/.editorconfig|CODEOWNERS|*/CODEOWNERS)
       return 0 ;;
   esac
@@ -440,6 +481,8 @@ nh_keep() {
     nh_match_any "$_p" "$_ex" && continue
     if [ "$1" = count ]; then
       nh_is_test "$_p" && continue
+      nh_is_doc "$_p" && continue
+      nh_is_data "$_p" && continue
       printf '%s\n' "$_rust" | grep -Fxq -- "$_p${NH_TAB}all" && continue
     elif [ -n "${NH_ONLY_TESTS-}" ]; then
       nh_is_data "$_p" && continue
@@ -451,18 +494,22 @@ nh_keep() {
   done | NH_ATTR=$_attr awk 'BEGIN { n = split(ENVIRON["NH_ATTR"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($0 in skip)'
 }
 
-# Added lines of kept, non-test files between $1 and $2 (branch $3).
+# Added lines of our own code between $1 and $2 (branch $3): no tests, docs, data,
+# generated or vendored files, and no commits that came from someone else.
 nh_count_added() {
   _ns=$(nh_tmp)
-  if nh_has_merges "$1" "$2"; then
-    # Sum per commit, leaving out merges and commits that came from the default branch.
-    if ! nh_is_trunk "$3" && _d=$(nh_default_ref); then
-      git -c core.quotePath=false log --no-merges --numstat --no-renames --format= "$1..$2" --not "$_d" > "$_ns" 2>/dev/null
-    else
-      git -c core.quotePath=false log --no-merges --numstat --no-renames --format= "$1..$2" > "$_ns" 2>/dev/null
-    fi
+  _s=$(nh_review_base "$1" "$2" "$3")
+  _th=$(nh_theirs "$_s" "$2" "$3")
+  if [ -z "$_th" ] && ! nh_has_merges "$_s" "$2"; then
+    git -c core.quotePath=false diff --numstat --no-renames "$_s" "$2" > "$_ns" 2>/dev/null
   else
-    git -c core.quotePath=false diff --numstat --no-renames "$1" "$2" > "$_ns" 2>/dev/null
+    # Sum per commit over our own commits, leaving out merges.
+    _ours=$(git rev-list --no-merges "$_s..$2" 2>/dev/null | NH_TH=$_th awk '
+      BEGIN { n = split(ENVIRON["NH_TH"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
+      !($0 in skip)')
+    : > "$_ns"
+    [ -z "$_ours" ] || printf '%s\n' "$_ours" |
+      git -c core.quotePath=false log --no-walk=unsorted --stdin --numstat --no-renames --format= > "$_ns" 2>/dev/null
   fi
   _kept=$(awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' "$_ns" | sort -u | nh_keep count)
   NH_KEPT=$_kept awk -F'\t' '
@@ -472,7 +519,7 @@ nh_count_added() {
   rm -f "$_ns"
 }
 
-# Added lines of kept, non-test files in uncommitted work (tracked and untracked,
+# Added lines of our own code in uncommitted work (tracked and untracked,
 # minus ignored), compared with HEAD.
 nh_count_uncommitted() {
   _tree=$(nh_snapshot) || { echo 0; return; }

@@ -6,6 +6,19 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The push gate counts only code. Markdown, text, JSON, YAML, TOML, XML, config files, HTML/CSS
+  and SVG no longer push a change over the threshold.
+
+### Fixed
+
+- After a feature branch was rebased onto a newer main, the gate counted main's new commits as
+  yours, and the review diff included them. Now only your own commits count.
+- A rebase or amend no longer throws away the last review: commits already reviewed stay
+  reviewed, and only new or changed ones count.
+- On main, commits by other people that you pulled no longer count toward your threshold.
+
 ## [0.6.2] - 2026-11-14
 
 ### Fixed

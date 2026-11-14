@@ -149,6 +149,46 @@ eq "own branch code counts" "$(hook 'git push -u origin feat' "$R")" 2
 eq "-C from elsewhere" "$(hook "git -C $R push -u origin feat" "$WORK")" 2
 eq "explicit other branch" "$(hook 'git push origin main' "$R")" 0
 
+# only our own code counts: no docs or data, nothing from main after a rebase,
+# reviewed commits stay reviewed when rebased, pulled commits by others don't count
+unrev() { sh "$NAHUYA" status | sed -n 's/^unreviewed_added_lines=\([0-9]*\).*/\1/p'; }
+git init -q --bare "$WORK/rb.git"; git clone -q "$WORK/rb.git" "$WORK/rb" 2>/dev/null
+cd "$WORK/rb" || exit 1
+echo seed > README; commit seed; git push -q origin main 2>/dev/null; git remote set-head origin main >/dev/null 2>&1
+lines docs/guide.md 300; lines notes.txt 300; lines conf/app.yaml 300; lines data/items.json 300; lines app.cfg 300; lines README 300
+commit docs
+eq "docs and data don't count" "$(hook 'git push' "$WORK/rb")" 0
+git push -q origin main 2>/dev/null
+git checkout -q -b topic; lines src/t1.py 300; commit t1
+eq "topic before the rebase" "$(unrev)" 300
+git checkout -q main; lines src/m1.py 900; commit m1; git push -q origin main 2>/dev/null
+git checkout -q topic; git rebase -q main >/dev/null 2>&1
+eq "rebase onto main: main's code not counted" "$(unrev)" 300
+eq "rebase onto main: gate passes" "$(hook 'git push -u origin topic' "$WORK/rb")" 0
+grep -q 'src/m1.py' "$(sh "$NAHUYA" diff --target | sed -n 's/^diff=//p')" && bad "review diff includes main's code after a rebase" || ok
+sh "$NAHUYA" mark >/dev/null
+lines src/t2.py 100; commit t2
+git checkout -q main; lines src/m2.py 900; commit m2; git push -q origin main 2>/dev/null
+git checkout -q topic; git rebase -q main >/dev/null 2>&1
+eq "reviewed commits stay reviewed after a rebase" "$(unrev)" 100
+sh "$NAHUYA" mark >/dev/null
+lines src/t2.py 5; git add -A; git commit -q --amend --no-edit
+eq "amended commit counts again" "$(unrev)" 105
+sh "$NAHUYA" mark >/dev/null
+printf 'conflict\n' > src/m2.py; commit c1
+git checkout -q main; printf 'theirs\n' > src/m2.py; commit c2; git push -q origin main 2>/dev/null
+git checkout -q topic; git rebase main >/dev/null 2>&1
+code=$(hook 'git push' "$WORK/rb")
+[ "$code" = 0 ] && ! grep -q 'fatal\|error' "$WORK/out" && ok || bad "gate during a stopped rebase: $code $(cat "$WORK/out")"
+git rebase --abort
+git checkout -q main; sh "$NAHUYA" mark >/dev/null
+git clone -q "$WORK/rb.git" "$WORK/rb2" 2>/dev/null
+(cd "$WORK/rb2" && lines src/o.py 900 && git add -A && GIT_AUTHOR_EMAIL=o@o git commit -qm other && git push -q origin main 2>/dev/null)
+git pull -q --rebase origin main 2>/dev/null
+lines src/mine.py 50; commit mine
+eq "pulled commits by others not counted on main" "$(unrev)" 50
+cd "$R" || exit 1
+
 # no remote: nothing to compare against
 git init -q "$WORK/solo"; cd "$WORK/solo" && lines x.py 900 && commit x
 eq "no remote passes" "$(hook 'git push' "$WORK/solo")" 0

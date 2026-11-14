@@ -79,7 +79,7 @@ cmd_status() {
   [ -z "${NH_ONLY_TESTS-}" ] || echo "scope=tests-only"
   if [ -n "$ANCHOR" ]; then
     echo "range=$(nh_short "$BASE")..$(nh_short "$NH_TIP")"
-    echo "unreviewed_added_lines=$(nh_count_added "$ANCHOR" "$NH_TIP" "$NH_BRANCH") (non-test, non-generated)"
+    echo "unreviewed_added_lines=$(nh_count_added "$ANCHOR" "$NH_TIP" "$NH_BRANCH") (own code only: no tests, docs, data or generated files)"
   else
     echo "range=none (no upstream or remote default branch; pass base..tip, or review a path)"
   fi
