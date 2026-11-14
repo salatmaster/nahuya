@@ -6,6 +6,17 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- When the gate blocks on code that doesn't ship, Claude stops and suggests an `exclude:` entry
+  in `.nahuya.md` instead of reviewing it. Claude leaves the file for you to edit.
+
+### Fixed
+
+- The push gate counted code in non-production folders such as `research/`, `examples/` and
+  `benchmarks/`, which whole-repo runs already skip, so committing one-off research scripts
+  could block a push. Those folders no longer count.
+
 ## [0.6.3] - 2026-11-14
 
 ### Changed

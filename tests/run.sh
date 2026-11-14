@@ -90,6 +90,7 @@ rm -f src/wip.py; rm -f .git/nahuya/blocks
 lines src/app.py 600; commit big
 eq "600 lines blocks" "$(hook 'git push' "$R")" 2
 grep -q 'push blocked, nothing in this command ran. 600 unreviewed' "$WORK/out" && ok || bad "block message: $(cat "$WORK/out")"
+grep -q 'add them to `exclude:` in .nahuya.md' "$WORK/out" && ok || bad "block message suggests exclude: $(cat "$WORK/out")"
 eq "push in chain blocks" "$(hook 'git status && git push origin main' "$R")" 2
 eq "dry run passes" "$(hook 'git push -n' "$R")" 0
 eq "gate off via env" "$(NAHUYA_GATE=off hook 'git push' "$R")" 0
@@ -158,6 +159,8 @@ echo seed > README; commit seed; git push -q origin main 2>/dev/null; git remote
 lines docs/guide.md 300; lines notes.txt 300; lines conf/app.yaml 300; lines data/items.json 300; lines app.cfg 300; lines README 300
 commit docs
 eq "docs and data don't count" "$(hook 'git push' "$WORK/rb")" 0
+lines research/r-12/backtest.py 900; lines examples/demo.py 900; lines src/core.py 10; commit nonprod
+eq "non-production folders don't count" "$(sh "$NAHUYA" status | sed -n 's/^unreviewed_added_lines=\([0-9]*\).*/\1/p')" 10
 git push -q origin main 2>/dev/null
 git checkout -q -b topic; lines src/t1.py 300; commit t1
 eq "topic before the rebase" "$(unrev)" 300

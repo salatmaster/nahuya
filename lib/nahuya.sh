@@ -466,6 +466,8 @@ nh_match_any() {
 # stdin: paths. stdout: paths kept. $1 = count (also drops tests) | review.
 nh_keep() {
   _paths=$(cat)
+  # The gate counts code that ships: the folders whole-repo runs skip don't count.
+  [ "$1" != count ] || _paths=$(printf '%s\n' "$_paths" | grep -v -E "$NH_NONPROD_RE")
   [ -n "$_paths" ] || return 0
   _ex=$(nh_user_excludes)
   _attr=$(printf '%s\n' "$_paths" | git check-attr --stdin linguist-generated linguist-vendored 2>/dev/null |

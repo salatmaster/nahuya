@@ -52,6 +52,7 @@ gate() (
   cat >&2 <<EOF
 nahuya: push blocked, nothing in this command ran. $added unreviewed added lines of non-test code since $(nh_short "$anchor")$([ "$pending" -gt 0 ] && echo ", $pending of them not committed yet") (threshold $threshold).
 Commit anything the blocked command was going to commit, then run the nahuya:polish skill with no arguments. It re-runs the push when it finishes.
+If most of these lines are code that doesn't ship (one-off scripts, experiments), stop instead and tell the user which folders. Suggest they add them to \`exclude:\` in .nahuya.md at the repo root, which leaves them out from now on. Editing that file is their call, so don't edit it yourself.
 Skipping review is the user's call (/nahuya:skip), so don't work around the gate. If you are a subagent, stop and report this to your caller.
 EOF
   exit 2

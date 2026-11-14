@@ -116,7 +116,7 @@ Every animation here is a real session with Claude Opus 5.5, recorded in a termi
 - **Recognized as a push:** `git push` and `gh pr create`. This includes pushes inside chains (`commit && push`), subshells and `bash -c`, behind `git -C` or `cd`, and through git aliases.
 - **Ignored:** dry runs, deletions and tag-only pushes.
 - **Counted:** added lines of your own code since the last completed review. When the same command commits first (`git commit … && git push`), the work it is about to commit counts too. Deletions don't count.
-- **Excluded:** tests (including Rust modules declared under `#[cfg(test)]`), docs and data (Markdown, text, JSON, YAML, TOML, XML, configs, HTML/CSS, SVG), lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and other people's code: what came from your main branch, merged in or rebased onto, and on main itself, pulled commits by other authors. Commits already reviewed stay reviewed after a rebase; an amended or squashed commit counts again.
+- **Excluded:** tests (including Rust modules declared under `#[cfg(test)]`), docs and data (Markdown, text, JSON, YAML, TOML, XML, configs, HTML/CSS, SVG), non-production folders such as `research/`, `examples/`, `benchmarks/` and `fixtures/` (the same ones whole-repo runs skip), lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and other people's code: what came from your main branch, merged in or rebased onto, and on main itself, pulled commits by other authors. Commits already reviewed stay reviewed after a rebase; an amended or squashed commit counts again.
 
 </details>
 
@@ -253,7 +253,7 @@ nahuya reads each setting from these sources, in this order:
 
 ### Project notes: `.nahuya.md`
 
-This file is optional and goes at the repo root. Only the reviewer reads it, so it adds nothing to your sessions' context.
+This file is optional and goes at the repo root. Only the reviewer reads it, so it adds nothing to your sessions' context. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file itself.
 
 ```markdown
 ---
@@ -386,7 +386,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 172 tests; needs only sh, git and awk
+sh tests/run.sh                     # 174 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```
