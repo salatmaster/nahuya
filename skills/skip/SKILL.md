@@ -1,6 +1,6 @@
 ---
 name: skip
-description: Let the next push of the current HEAD through the nahuya gate without review.
+description: Skip nahuya review of the commits up to the current HEAD, so the push gate stops counting them.
 disable-model-invocation: true
 ---
 

@@ -23,9 +23,6 @@ gate() (
   nh_enter_repo "$1" || exit 0
   [ "$(nh_cfg gate)" = on ] || exit 0
   nh_resolve_tip "$2" || exit 0
-  if [ -f "$NH_STATE/skip" ] && [ "$(cat "$NH_STATE/skip")" = "$NH_TIP" ]; then
-    rm -f "$NH_STATE/skip"; exit 0
-  fi
   anchor=$(nh_anchor "$NH_TIP" "$NH_BRANCH") || exit 0
   added=$(nh_count_added "$anchor" "$NH_TIP" "$NH_BRANCH")
   threshold=$(nh_cfg threshold)

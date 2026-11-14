@@ -100,10 +100,12 @@ hook 'git push' "$R" >/dev/null; hook 'git push' "$R" >/dev/null; hook 'git push
 eq "4th attempt passes" "$(hook 'git push' "$R")" 0
 grep -q '"additionalContext"' "$WORK/out" && ok || bad "loop guard notice missing"
 
-# skip: one push only
-sh "$NAHUYA" skip >/dev/null
-eq "skip passes once" "$(hook 'git push' "$R")" 0
-eq "skip consumed" "$(hook 'git push' "$R")" 2
+# skip moves the anchor: skipped lines aren't counted again
+sh "$NAHUYA" skip | grep -q '^nahuya: skipped review of [0-9]* added lines' && ok || bad "skip message"
+eq "skip passes" "$(hook 'git push' "$R")" 0
+eq "skip still passes" "$(hook 'git push' "$R")" 0
+lines after_skip.py 100; commit afterskip
+eq "gate counts only after the skip" "$(sh "$NAHUYA" status | sed -n 's/^unreviewed_added_lines=\([0-9]*\).*/\1/p')" 100
 
 # mark ends it
 sh "$NAHUYA" mark >/dev/null
@@ -336,6 +338,19 @@ CLAUDE_CONFIG_DIR=$T sh "$NAHUYA" aliases remove >/dev/null
 blk() { sed -n '/^1\. \*\*Map\.\*\*/,/^   Then run the final/p' "$1" | sed '$d'; }
 [ -n "$(blk "$ROOT/skills/review/SKILL.md")" ] && ok || bad "planning block not found"
 eq "shared planning steps" "$(blk "$ROOT/skills/review/SKILL.md")" "$(blk "$ROOT/skills/polish/SKILL.md")"
+
+# release scripts: cut [Unreleased] into a version, notes from the changelog, version in plugin.json
+RS=$ROOT/.github/scripts; C=$WORK/rel; mkdir -p "$C"
+printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- A thing.\n\n## [0.1.0] - 2026-01-01\n\nFirst.\n\n[unreleased]: https://x/compare/v0.1.0...HEAD\n[0.1.0]: https://x/releases/tag/v0.1.0\n' > "$C/CHANGELOG.md"
+bash "$RS/cut-changelog.sh" 0.2.0 2026-02-02 "$C/CHANGELOG.md" >/dev/null 2>&1
+grep -q '^## \[0.2.0\] - 2026-02-02$' "$C/CHANGELOG.md" && grep -q '^\[0.2.0\]: https://x/compare/v0.1.0...v0.2.0$' "$C/CHANGELOG.md" && ok || bad "cut changelog: $(cat "$C/CHANGELOG.md")"
+bash "$RS/cut-changelog.sh" 0.3.0 2026-02-03 "$C/CHANGELOG.md" >/dev/null 2>&1 && bad "empty [Unreleased] released" || ok
+eq "release notes" "$(bash "$RS/release-notes.sh" 0.2.0 "$C/CHANGELOG.md" | head -3 | tr '\n' '|')" "### Fixed||- A thing.|"
+printf '{\n  "name": "x",\n  "version": "0.1.0",\n  "userConfig": { "a": { "version": "1" } }\n}\n' > "$C/plugin.json"
+bash "$RS/set-plugin-version.sh" 0.2.0 "$C/plugin.json" >/dev/null
+eq "plugin version set" "$(grep -c '"version": "0.2.0"' "$C/plugin.json")" 1
+grep -q '"version": "1"' "$C/plugin.json" && ok || bad "set-plugin-version touched userConfig"
+bash "$RS/release-notes.sh" "$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$ROOT/.claude-plugin/plugin.json")" "$ROOT/CHANGELOG.md" >/dev/null 2>&1 && ok || bad "CHANGELOG.md has no section for the current version"
 
 # session start layer
 eq "layer on" "$(echo '{}' | sh "$ROOT/hooks/session-start.sh" | head -c 8)" "(nahuya)"

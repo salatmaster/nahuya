@@ -217,7 +217,7 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 |---|---|
 | `/nahuya:review [tests] [all\|folder\|base..tip]` | Report-only review. Changes nothing. With no argument it reviews your unpushed changes; `all` reviews the whole codebase. |
 | `/nahuya:polish [tests] [all\|folder\|base..tip]` | Review-and-fix loop. With no argument it covers the commits waiting to be pushed (the gate sends Claude here). With `all` or a folder, it fixes existing code and commits, but never pushes. |
-| `/nahuya:skip` | Let the next push of the current commit through unreviewed. Claude can't invoke this skill and is told not to bypass the gate. |
+| `/nahuya:skip` | Skip review of everything up to the current commit. The gate counts only the commits after it, so the same lines don't block you again. Claude can't invoke this skill and is told not to bypass the gate. |
 | `/nahuya:aliases [install\|remove]` | Add short commands `/nah-review`, `/nah-polish`, `/nah-skip` and `/nah-stats`. They go in `~/.claude/skills`, because plugin commands always carry the `nahuya:` prefix. `remove` deletes only these files. |
 | `nahuya stats` | Applied and rejected findings by category and diff size, from your own history. Run it in a terminal from the plugin's `bin/`, or ask Claude to run it. |
 
@@ -386,12 +386,12 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 151 tests; needs only sh, git and awk
+sh tests/run.sh                     # 159 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```
 
-Issues and pull requests are welcome. Please keep the plugin dependency-free and keep the layer small.
+Issues and pull requests are welcome. Please keep the plugin dependency-free and keep the layer small. Add a line for any change users would notice under `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Releases are cut from it by the Release workflow.
 
 ## License
 

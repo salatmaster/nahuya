@@ -20,7 +20,7 @@ nahuya clones [all|PATH] [--min-lines N] [--tests|--no-tests|--only-tests] [--wi
                                                     find near-duplicate code across files
 nahuya log ROUND DECISION CATEGORY ID TEXT...       record a decision (applied|rejected|needs-context)
 nahuya mark [--keep-anchor]                         mark HEAD as reviewed (ends a loop)
-nahuya skip                                         let the next push of HEAD skip the gate
+nahuya skip                                         skip review of everything up to HEAD
 nahuya config [KEY [VALUE|--unset] [--global]]      show or change settings
 nahuya stats                                        what past reviews applied and rejected
 nahuya aliases [install|remove]                     short /nah-review, /nah-polish, ... commands
@@ -527,7 +527,7 @@ cmd_aliases() {
           polish) alias_skill nah-polish "Short for /nahuya:polish: review-and-fix loop for over-engineering." \
             "[tests] [all | folder | base..tip]  default: commits waiting to be pushed" \
             'Invoke the `nahuya:polish` skill with the arguments: $ARGUMENTS' ;;
-          skip) alias_skill nah-skip "Short for /nahuya:skip: let the next push through the nahuya gate." "" \
+          skip) alias_skill nah-skip "Short for /nahuya:skip: skip review of the commits up to HEAD." "" \
             "$(printf '!`nahuya skip`\n\nTell the user in one line what the output above says. If a push was blocked\nearlier in this session, run it again.')" ;;
           stats) alias_skill nah-stats "What past nahuya reviews applied and rejected in this repo." "" \
             "$(printf '!`nahuya stats`\n\nShow the output above to the user as is.')" ;;
@@ -597,12 +597,17 @@ cmd_mark() {
   else echo "nahuya: $(nh_short "$NH_TIP") marked as reviewed"; fi
 }
 
+# Skipping is the user's decision about this code, so it moves the anchor like a
+# review would: the gate won't count these lines again on the next push.
 cmd_skip() {
   require_repo
   nh_resolve_tip HEAD || nh_die "no commits yet"
-  mkdir -p "$NH_STATE"
-  printf '%s\n' "$NH_TIP" > "$NH_STATE/skip"
-  echo "nahuya: the next push of $(nh_short "$NH_TIP") skips review (a new commit cancels this)"
+  _key=$(nh_branch_key "$NH_BRANCH")
+  _a=$(nh_anchor "$NH_TIP" "$NH_BRANCH" 2>/dev/null) && _n=$(nh_count_added "$_a" "$NH_TIP" "$NH_BRANCH") || _n=0
+  mkdir -p "$NH_STATE/anchors"
+  printf '%s\n' "$NH_TIP" > "$NH_STATE/anchors/$_key"
+  rm -f "$NH_STATE/blocks"
+  echo "nahuya: skipped review of $_n added lines up to $(nh_short "$NH_TIP"); the gate counts only commits after it"
 }
 
 cmd_config() {

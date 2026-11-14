@@ -1,0 +1,91 @@
+name: Release
+
+# Releasing is a dispatch, not a tag push. The workflow cuts the changelog entry for
+# the version, writes the version into plugin.json and runs the tests, and only then
+# commits and tags. So the tag always points at a commit containing its own changelog,
+# and a failed run leaves main untouched. Pushing a tag by hand does nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the leading v (for example 0.6.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# Two releases must never interleave: both push main.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # First, because it validates the version and refuses to release one whose
+      # [Unreleased] section says nothing.
+      - name: Cut the changelog
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: .github/scripts/cut-changelog.sh "${{ inputs.version }}" "$(date -u +%Y-%m-%d)"
+
+      # Claude Code updates a plugin only when this version changes, so it is committed
+      # together with the changelog: both record the same fact.
+      - name: Record the version in plugin.json
+        run: .github/scripts/set-plugin-version.sh "${{ inputs.version }}"
+
+      - name: Check the version is free
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists. Delete it, or pick another version." >&2
+            exit 1
+          fi
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists." >&2
+            exit 1
+          fi
+
+      - name: Test
+        run: sh tests/run.sh
+
+      # Nothing has been pushed until here, so a red run costs nothing else. The push of
+      # main fails rather than rebasing if someone landed a commit meanwhile: the tests
+      # above ran on this tree, not that one.
+      - name: Commit the changelog and tag it
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md .claude-plugin/plugin.json
+          if git diff --cached --quiet; then
+            echo "The changelog and plugin.json were already current for $VERSION."
+          else
+            git commit -m "Release $VERSION"
+            git push origin main
+          fi
+          git tag -a "v$VERSION" -m "$VERSION"
+          git push origin "v$VERSION"
+
+      # Notes come from the changelog rather than from --generate-notes: a list of commit
+      # or pull request titles records what landed, not what changed for someone using
+      # the plugin. The script fails when the section is missing or empty.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          .github/scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
+          gh release create "v$VERSION" --title "v$VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"

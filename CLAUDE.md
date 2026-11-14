@@ -80,7 +80,9 @@ These rules came out of the plugin's design. Follow them unless the maintainer s
 
 ## Releases
 
-- **Bump `version` in `.claude-plugin/plugin.json` for every user-visible change.** Claude Code decides whether to update by version, so an unchanged version means users never get the change.
+- **The changelog entry belongs to the change, not to the release.** Every user-visible change adds its line under `## [Unreleased]` in `CHANGELOG.md` in the same commit, written for users: what changed for them, not which files moved. Sections follow Keep a Changelog (Added, Changed, Fixed, Removed). A change nobody could notice gets no entry.
+- **Releasing is one dispatch of the Release workflow with a version.** It cuts `[Unreleased]` into that version, writes the version into `.claude-plugin/plugin.json`, runs the tests, then commits, tags and publishes the GitHub release with notes from the changelog. Don't bump `version` by hand: Claude Code updates a plugin only when that field changes, so the workflow keeps it and the changelog in one commit. Pull `main` after a release.
+  - The workflow refuses an empty `[Unreleased]` on purpose. That means a change forgot its entry (add the entry it should have had) or there is nothing to release. Never hand-edit the changelog at release time just to get past it.
 - **Use normal commits on `main` from v0.3.0 on.** Don't amend or force-push published history.
 - **Never push without the maintainer's go-ahead.**
 - **CI must be green** on ubuntu, macos and windows.
