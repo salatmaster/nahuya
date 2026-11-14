@@ -183,13 +183,23 @@ cd "$WORK/solo" || exit 1
 lines lib/a.py 400; lines lib/b.py 400; lines web/c.ts 400; printf 'x\n' > NOTES.md; lines vendor/v.js 500
 commit spread
 out=$(sh "$NAHUYA" shards . --max-lines 500)
-eq "shard count" "$(printf '%s\n' "$out" | sed -n 's/^shards=//p')" 4
+eq "shard count" "$(printf '%s\n' "$out" | sed -n 's/^shards_total=//p')" 4
 eq "shard lines" "$(printf '%s\n' "$out" | sed -n 's/^lines=//p')" 2100
 printf '%s\n' "$out" | grep -q NOTES && bad "docs not skipped" || ok
 grep -q 'vendor/' .git/nahuya/shards/*.txt && bad "vendor not skipped" || ok
-grep -q '^lib/a.py (400 lines)$' .git/nahuya/shards/shard-1.txt && ok || bad "shard manifest: $(cat .git/nahuya/shards/shard-1.txt)"
+grep -q '^lib/a.py (400 lines)$' .git/nahuya/shards/shard-*.txt && ok || bad "shard manifest"
 eq "all keyword" "$(cd lib && sh "$NAHUYA" shards all --max-lines 500 | sed -n 's/^lines=//p')" 2100
+out=$(sh "$NAHUYA" shards . --max-lines 500 --top 2)
+eq "top limits selection" "$(printf '%s\n' "$out" | sed -n 's/^shards_selected=//p')" 2
+printf '%s\n' "$out" | grep -q '^remaining=2 (next batch: --skip 2)$' && ok || bad "next batch hint: $out"
+eq "skip takes the rest" "$(sh "$NAHUYA" shards . --max-lines 500 --skip 2 | sed -n 's/^shards_selected=//p')" 2
+eq "fit packs into budget" "$(sh "$NAHUYA" shards . --fit 2 | sed -n 's/^shards_total=//p')" 2
+eq "shard_lines from config" "$(NAHUYA_SHARD_LINES=900 sh "$NAHUYA" shards . | sed -n 's/^shard_lines=//p')" 900
+eq "max_agents from defaults" "$(sh "$NAHUYA" shards . --defaults 'max_agents=4' | sed -n 's/^max_agents=//p')" 4
 eq "explicit doc file" "$(sh "$NAHUYA" shards NOTES.md | sed -n 's/^files=//p')" 1
+printf 'class FooFactory:\n    pass\nclass BarManager:\n    pass\n' > lib/zz_factory.py; commit sig
+eq "suspicious shard ranks first" "$(sh "$NAHUYA" shards lib --max-lines 10 | head -1 | sed 's/.*signals=//')" 2
+git rm -q lib/zz_factory.py; commit unsig
 sh "$NAHUYA" status >/dev/null 2>&1 && ok || bad "status dies without a remote"
 sh "$NAHUYA" shards lib --loop >/dev/null
 sh "$NAHUYA" log 1 applied dead-code "lib/a.py:x" "removed" >/dev/null && ok || bad "log in whole mode"

@@ -161,7 +161,14 @@ You can also run it by hand at any time, including on your whole codebase:
 /nahuya:polish src/billing/     # review and fix existing code in a folder
 ```
 
-For the whole codebase or a folder, nahuya splits the code into shards of whole files, about 1500 lines each and in directory order. Docs, generated and vendored files are skipped. Each shard gets its own fresh reviewer, so a large repo still gets full attention per file instead of a skim. `/nahuya:polish all` (or a folder) applies fixes with the same rules as the pre-push loop and commits them, but it never pushes.
+For the whole codebase or a folder, nahuya splits the code into shards of whole files, about 3000 lines each and in directory order. Docs, generated and vendored files are skipped. Each shard gets its own fresh reviewer, so every file gets real attention instead of a skim.
+
+A run uses at most 10 reviewer subagents by default (`max-agents`). If a codebase needs more, Claude stops and asks before spending anything, and shows the numbers for each choice:
+
+- **Most suspicious first.** A cheap grep ranks shards by over-engineering signals: abstract bases, interfaces, factories, managers, registries, wrappers and generics. The top ones are reviewed now. The rest follow as a next batch with `--skip N`.
+- **Bigger shards.** Everything is fitted into the budget, with a warning about less attention per file.
+- **Everything.** Every shard gets reviewed, with an explicit token estimate.
+- **A narrower folder.** `/nahuya:polish all` (or a folder) applies fixes with the same rules as the pre-push loop and commits them, but it never pushes.
 
 ## Why it won't make Claude worse
 
@@ -196,6 +203,8 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 | `model` | `inherit` | `inherit` / `opus` / `fable` / `sonnet` / `haiku`: the reviewer subagent's model |
 | `fix-mode` | `commit` | `commit`: new commit · `amend`: only if HEAD isn't pushed · `uncommitted`: leave fixes for you |
 | `layer` | `on` | `on` / `off` |
+| `shard-lines` | `3000` | lines of code per reviewer in whole-repo and folder runs |
+| `max-agents` | `10` | reviewer subagents per whole-repo or folder run before Claude asks you |
 
 ```
 /nahuya:config threshold 1000            # this repo
@@ -271,7 +280,7 @@ To clean up existing code, run `/nahuya:polish all` or `/nahuya:polish src/`.
 
 <br>
 
-Yes. `/nahuya:review all` gives a report only, and `/nahuya:polish all` reviews and fixes. Pass a folder instead of `all` to narrow either one. Large repos are split into shards of about 1500 lines, and each shard gets a fresh reviewer. Above 8 shards, Claude tells you the count and asks before going on. To keep a run focused and cheap, start with the folders you suspect most, like `/nahuya:polish src/services/`.
+Yes. `/nahuya:review all` gives a report only, and `/nahuya:polish all` reviews and fixes. Pass a folder instead of `all` to narrow either one. Code is split into shards of about 3000 lines, and each shard gets a fresh reviewer. Runs are capped at 10 reviewers by default. On a bigger codebase, Claude asks first: review the most suspicious shards now and the rest in a later batch, use bigger shards, review everything (with a token estimate), or narrow to a folder.
 
 </details>
 
@@ -323,7 +332,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Limitations
 
 - Changes under the threshold (500 lines by default) are never reviewed automatically. Run `/nahuya:review` on those.
-- A whole-repo run costs roughly one reviewer per 1500 lines, plus verification. Start with the folders that matter.
+- A whole-repo run costs roughly one reviewer per 3000 lines, plus verification. The `max-agents` budget keeps that in check.
 - It doesn't see pushes made outside Claude. It also doesn't see shell aliases such as `gp` that exist only in your interactive shell; git aliases do work.
 - "Lines since the last review" is approximate. After a rebase it resets to your upstream or merge-base.
 - The reviewer can be wrong. That's why every finding is re-verified, rejections need evidence, and anything uncertain comes to you.
@@ -331,7 +340,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 82 tests; needs only sh, git and awk
+sh tests/run.sh                     # 89 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

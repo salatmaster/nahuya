@@ -13,12 +13,30 @@ diff path. Launch one fresh `nahuya:reviewer` with `mode: review`, `round: 1`,
 the diff path, `ledger: none`, and `requested` if the user said what the code is
 for.
 
-**`all` (the whole repo) or a folder:** run `nahuya shards <all|folder>`, which splits
-the code into shards and prints their paths. If there are more than 8, tell the
-user the count and ask whether to go ahead or narrow the path, unless they
-already said to go ahead. Launch a fresh `nahuya:reviewer` per shard with
-`mode: review`, `round: 1`, `files: <shard path>` and `ledger: none`, up to four
-at a time.
+**`all` (the whole repo) or a folder:** run `nahuya shards --defaults 'shard_lines=${user_config.shard_lines} max_agents=${user_config.max_agents}' <all|folder>` plus any
+flags from the arguments (`--top N`, `--skip K`, `--fit N`, `--max-lines N`). It
+splits the code into shards ranked by over-engineering signals and prints them
+with `shards_total`, `max_agents` and `est_tokens`.
+
+Check the budget before launching any reviewer: it is `max_agents`. If the
+selected shards fit, or the arguments already include `--top`, `--skip`,
+`--fit` or `--max-lines`, go ahead. Otherwise don't start: run the same command
+with `--fit <budget>` to learn the shard size that would fit, then ask the user
+to choose, with the numbers:
+- **Most suspicious first:** `--top <budget>`. The rest can follow later with
+  `--skip <budget>`.
+- **Bigger shards:** `--fit <budget>`, at the size you just learned. Above
+  roughly 6000 lines per shard, attention per file drops.
+- **Everything:** all `shards_total` shards, about `est_tokens` tokens. Say
+  plainly that this is expensive.
+- **A narrower folder.**
+
+Then run the command with their choice.
+
+Launch a fresh `nahuya:reviewer` per selected shard with `mode: review`,
+`round: 1`, `files: <shard path>` and `ledger: none`, up to four at a time. If
+shards remain, end by saying how to review the next batch
+(`/nahuya:review <target> --skip N`).
 
 Present the findings to the user in plain language, grouped by file, most
 valuable first, keeping locations and evidence. Say that nothing was changed and

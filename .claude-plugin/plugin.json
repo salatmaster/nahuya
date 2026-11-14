@@ -1,6 +1,6 @@
 {
   "name": "nahuya",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Over-engineering review for Claude Code: a manual reviewer that proves what it calls unused, a pre-push review-and-fix loop, and a tiny layer that makes unrequested additions visible.",
   "author": {
     "name": "salatmaster"
@@ -66,6 +66,20 @@
       "title": "Persistent layer",
       "description": "At session start, ask Claude to list unrequested additions as `added: X — why` lines (about 120 tokens).",
       "default": true
+    },
+    "shard_lines": {
+      "type": "number",
+      "title": "Shard size (lines)",
+      "description": "For whole-repo and folder reviews: about how many lines of code each reviewer subagent gets.",
+      "default": 3000,
+      "min": 200
+    },
+    "max_agents": {
+      "type": "number",
+      "title": "Max reviewer subagents per run",
+      "description": "For whole-repo and folder reviews: if more are needed, Claude asks you how to proceed (most suspicious first, bigger shards, everything, or a narrower folder).",
+      "default": 10,
+      "min": 1
     }
   }
 }

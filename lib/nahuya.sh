@@ -16,6 +16,8 @@ nh_default() {
   case $1 in
     gate|layer) echo on ;;
     threshold) echo 500 ;;
+    shard_lines) echo 3000 ;;
+    max_agents) echo 10 ;;
     max_rounds) echo 3 ;;
     reviewer_model) echo inherit ;;
     fix_mode) echo commit ;;
@@ -23,7 +25,7 @@ nh_default() {
   esac
 }
 
-NH_KEYS="gate threshold max_rounds reviewer_model fix_mode layer"
+NH_KEYS="gate threshold max_rounds reviewer_model fix_mode layer shard_lines max_agents"
 
 # Canonical key from what a user types: max-rounds, MAX_ROUNDS, model, fix-mode.
 nh_key() {
@@ -39,7 +41,7 @@ nh_norm() {
   case $1 in
     gate|layer)
       case $_v in on|true|yes|1) echo on ;; off|false|no|0) echo off ;; *) return 1 ;; esac ;;
-    threshold|max_rounds)
+    threshold|max_rounds|shard_lines|max_agents)
       case $_v in ''|*[!0-9]*) return 1 ;; esac
       [ "$_v" -ge 1 ] 2>/dev/null || return 1
       echo "$_v" ;;

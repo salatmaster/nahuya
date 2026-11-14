@@ -22,7 +22,7 @@ follow **Existing code** at the end instead of Setup and Rounds.
    is committed.
 2. Run:
 
-       nahuya status --defaults 'threshold=${user_config.threshold} max_rounds=${user_config.max_rounds} reviewer_model=${user_config.reviewer_model} fix_mode=${user_config.fix_mode}' $ARGUMENTS
+       nahuya status --defaults 'threshold=${user_config.threshold} max_rounds=${user_config.max_rounds} reviewer_model=${user_config.reviewer_model} fix_mode=${user_config.fix_mode} shard_lines=${user_config.shard_lines} max_agents=${user_config.max_agents}' $ARGUMENTS
 
    It prints the range, the effective settings, `head_pushed`, the check command,
    the ledger path, and any files with uncommitted changes (`uncommitted=`).
@@ -96,11 +96,28 @@ Report briefly, using these sections:
 
 ## Existing code
 
-1. Run `nahuya shards <all|folder> --loop`. It splits the code into shards of whole
-   files (about 1500 lines each, in directory order), starts the ledger, and
-   prints each shard's path. If there are more than 8 shards, tell the user the
-   count and ask whether to go ahead or narrow the path, unless they already said
-   to go ahead.
+1. Run `nahuya shards --defaults 'shard_lines=${user_config.shard_lines} max_agents=${user_config.max_agents}' <all|folder>`
+   plus any flags from the arguments (`--top N`, `--skip K`, `--fit N`,
+   `--max-lines N`). It splits the code into shards of whole files, ranked by
+   over-engineering signals, and prints them with `shards_total`, `max_agents`
+   and `est_tokens`.
+
+   Check the budget before launching any reviewer. The budget is `max_agents`
+   minus 2, which leaves room for round 2 and a possible judge. If the selected
+   shards fit, or the arguments already include `--top`, `--skip`, `--fit` or
+   `--max-lines`, go ahead. Otherwise don't start: run the same command with
+   `--fit <budget>` to learn the shard size that would fit, then ask the user to
+   choose, with the numbers:
+   - **Most suspicious first:** `--top <budget>`. The rest can follow later with
+     `--skip <budget>`.
+   - **Bigger shards:** `--fit <budget>`, at the size you just learned. Above
+     roughly 6000 lines per shard, attention per file drops.
+   - **Everything:** all `shards_total` shards, about `est_tokens` tokens plus
+     verification. Say plainly that this is expensive.
+   - **A narrower folder.**
+
+   Once settled, run the command with their choice and `--loop`; that starts the
+   ledger for this run.
 2. Run the `nahuya status --defaults '...'` command from Setup step 2 without
    the trailing argument, for the settings and check command. Use the ledger
    path that `shards` printed. Then do Setup steps 3–4. `requested` is the user's words for
