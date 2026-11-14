@@ -581,8 +581,7 @@ cmd_mark() {
   _keep=; [ "${1-}" = --keep-anchor ] && _keep=1
   require_repo
   nh_resolve_tip HEAD || nh_die "no commits yet"
-  _key=$(nh_branch_key "$NH_BRANCH")
-  _rd=$NH_STATE/rounds/$_key
+  _rd=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")
   _added=; _ledger=
   if [ -f "$_rd/session" ]; then
     _a=$(sed -n 1p "$_rd/session")
