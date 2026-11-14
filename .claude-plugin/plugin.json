@@ -1,6 +1,6 @@
 {
   "name": "nahuya",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Over-engineering review for Claude Code: a manual reviewer that proves what it calls unused, a pre-push review-and-fix loop, and a tiny layer that makes unrequested additions visible.",
   "author": {
     "name": "salatmaster"
