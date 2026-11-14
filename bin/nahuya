@@ -1,0 +1,334 @@
+#!/bin/sh
+# nahuya CLI: state and diffs for the over-engineering review loop.
+# Run `nahuya help` for usage.
+
+NH_ROOT=$(cd "$(dirname "$0")/.." && pwd) || exit 1
+. "$NH_ROOT/lib/nahuya.sh"
+
+usage() {
+  cat <<'EOF'
+nahuya status [--defaults 'k=v ...'] [base..tip]   range, settings and loop context
+nahuya diff --round K [--full] [base..tip]          write the diff for review round K
+nahuya diff --target [range|branch]                 write a diff for a one-off review
+nahuya shards [PATH|all] [--max-lines N] [--loop]   split existing code into review shards
+nahuya log ROUND DECISION CATEGORY ID TEXT...       record a decision (applied|rejected|needs-context)
+nahuya mark [--keep-anchor]                         mark HEAD as reviewed (ends a loop)
+nahuya skip                                         let the next push of HEAD skip the gate
+nahuya config [KEY [VALUE|--unset] [--global]]      show or change settings
+nahuya stats                                        what past reviews applied and rejected
+EOF
+}
+
+# Shared option: --defaults 'k=v k=v' (plugin config values passed in by a skill).
+parse_defaults() {
+  REST=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --defaults) NH_USER_DEFAULTS=${2-}; shift 2 || shift ;;
+      --defaults=*) NH_USER_DEFAULTS=${1#--defaults=}; shift ;;
+      *) REST="$REST$1$NH_NL"; shift ;;
+    esac
+  done
+}
+
+require_repo() { nh_enter_repo || nh_die "not inside a git repository"; }
+
+# Sets ANCHOR, BASE (review base), NH_TIP, NH_BRANCH from an optional base..tip.
+resolve_range() {
+  case ${1-} in
+    *...*) _b=${1%%...*}; _t=${1##*...} ;;
+    *..*) _b=${1%%..*}; _t=${1##*..} ;;
+    '') _b=; _t= ;;
+    *) _b=; _t=$1 ;;
+  esac
+  nh_resolve_tip "${_t:-HEAD}" || nh_die "unknown revision: ${_t:-HEAD}"
+  if [ -n "$_b" ]; then
+    ANCHOR=$(git rev-parse -q --verify "$_b^{commit}") || nh_die "unknown revision: $_b"
+    case $1 in *...*) ANCHOR=$(git merge-base "$ANCHOR" "$NH_TIP") ;; esac
+    BASE=$ANCHOR
+  else
+    ANCHOR=$(nh_anchor "$NH_TIP" "$NH_BRANCH") ||
+      nh_die "no upstream or remote default branch to compare against; pass a range like main..HEAD"
+    BASE=$(nh_review_base "$ANCHOR" "$NH_TIP" "$NH_BRANCH")
+  fi
+}
+
+cmd_status() {
+  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
+  require_repo
+  if [ -n "${1-}" ]; then
+    resolve_range "$1"
+  else
+    nh_resolve_tip HEAD || nh_die "no commits yet"
+    if ANCHOR=$(nh_anchor "$NH_TIP" "$NH_BRANCH"); then
+      BASE=$(nh_review_base "$ANCHOR" "$NH_TIP" "$NH_BRANCH")
+    else
+      ANCHOR=; BASE=
+    fi
+  fi
+  if git for-each-ref --contains "$NH_TIP" --format=x refs/remotes 2>/dev/null | grep -q .; then _pushed=yes; else _pushed=no; fi
+  echo "repo=$NH_TOP"
+  echo "branch=${NH_BRANCH:-(detached)}"
+  if [ -n "$ANCHOR" ]; then
+    echo "range=$(nh_short "$BASE")..$(nh_short "$NH_TIP")"
+    echo "unreviewed_added_lines=$(nh_count_added "$ANCHOR" "$NH_TIP" "$NH_BRANCH") (non-test, non-generated)"
+  else
+    echo "range=none (no upstream or remote default branch; pass base..tip, or review a path)"
+  fi
+  for _k in $NH_KEYS; do echo "$_k=$(nh_cfg "$_k")"; done
+  echo "head_pushed=$_pushed"
+  echo "check=$(nh_md_scalar check)"
+  if _l=$(session_ledger); then echo "ledger=$_l (review loop in progress)"
+  elif [ -n "$ANCHOR" ]; then echo "ledger=$(nh_ledger_path "$ANCHOR" "$NH_BRANCH")"; fi
+  [ -n "$BASE" ] || return 0
+  _range_files=$(git -c core.quotePath=false diff --name-only --no-renames "$BASE" "$NH_TIP" 2>/dev/null)
+  git -c core.quotePath=false status --porcelain=v1 -uno 2>/dev/null | cut -c4- |
+    NH_RF=$_range_files awk 'BEGIN { n = split(ENVIRON["NH_RF"], a, "\n"); for (i = 1; i <= n; i++) r[a[i]] = 1 } ($0 in r) { print "uncommitted=" $0 }'
+}
+
+cmd_diff() {
+  _round=; _full=; _target=; _has_target=
+  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --round) _round=${2-}; shift 2 || shift ;;
+      --full) _full=1; shift ;;
+      --target) _has_target=1; shift; [ $# -gt 0 ] && { _target=$1; shift; } ;;
+      *) _range=$1; shift ;;
+    esac
+  done
+  require_repo
+  mkdir -p "$NH_STATE"
+  if [ -n "$_has_target" ]; then diff_target "$_target"; return; fi
+  case $_round in ''|*[!0-9]*) nh_die "usage: nahuya diff --round K [--full] [range]" ;; esac
+  if [ "$_round" -le 1 ]; then resolve_range "${_range-}"; else nh_resolve_tip HEAD || nh_die "no commits yet"; fi
+  _rd=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")
+  _out=$_rd/round-$_round.diff
+  if [ "$_round" -le 1 ]; then
+    rm -rf "$_rd"; mkdir -p "$_rd"
+    printf '%s\n%s\n%s\n%s\n' "$ANCHOR" "$BASE" "$NH_BRANCH" "$(nh_count_added "$ANCHOR" "$NH_TIP" "$NH_BRANCH")" > "$_rd/session"
+    nh_snapshot > "$_rd/tree-1"
+    _n=$(nh_write_diff "$BASE" "$NH_TIP" "$_out")
+  else
+    [ -f "$_rd/session" ] || nh_die "no review loop in progress; start with: nahuya diff --round 1"
+    _prev=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")/tree-$((_round - 1))
+    [ -f "$_prev" ] || nh_die "round $((_round - 1)) was not started"
+    _now=$(nh_snapshot); printf '%s\n' "$_now" > "$_rd/tree-$_round"
+    if [ -n "$_full" ]; then
+      _n=$(nh_write_diff "$(sed -n 2p "$_rd/session")" "$_now" "$_out")
+    else
+      _n=$(nh_write_diff "$(cat "$_prev")" "$_now" "$_out")
+    fi
+  fi
+  echo "diff=$_out"
+  echo "files=$_n"
+  echo "lines=$(wc -l < "$_out" | tr -d ' ')"
+}
+
+diff_target() {
+  _out=$NH_STATE/review.diff
+  case $1 in
+    '')
+      nh_resolve_tip HEAD || nh_die "no commits yet"
+      _a=$(nh_anchor "$NH_TIP" "$NH_BRANCH") || nh_die "nothing to compare against; pass a range like main..HEAD"
+      _n=$(nh_write_diff "$(nh_review_base "$_a" "$NH_TIP" "$NH_BRANCH")" "$(nh_snapshot)" "$_out") ;;
+    *..*)
+      resolve_range "$1"; _n=$(nh_write_diff "$BASE" "$NH_TIP" "$_out") ;;
+    *)
+      nh_resolve_tip "$1" || nh_die "not a revision or range: $1 (for a path, use: nahuya shards $1)"
+      _b=$(nh_fallback_base "$NH_TIP" "$NH_BRANCH") || nh_die "nothing to compare $1 against; pass a range"
+      _n=$(nh_write_diff "$_b" "$NH_TIP" "$_out") ;;
+  esac
+  echo "diff=$_out"
+  echo "files=$_n"
+  echo "lines=$(wc -l < "$_out" | tr -d ' ')"
+}
+
+# Split existing code under a path into shards of whole files (~N lines each,
+# directory order) for review. With --loop, also start a polish session.
+cmd_shards() {
+  _max=1500; _loop=; _path=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --max-lines) _max=${2-}; shift 2 || shift ;;
+      --loop) _loop=1; shift ;;
+      *) _path=$1; shift ;;
+    esac
+  done
+  case $_max in ''|*[!0-9]*) nh_die "--max-lines needs a number" ;; esac
+  require_repo
+  if [ "$_path" = all ] && [ ! -e all ]; then _path=$NH_TOP; fi
+  _files=$(git -c core.quotePath=false grep -I -l --full-name -e '' -- "${_path:-.}" 2>/dev/null | nh_keep review)
+  if [ -d "${_path:-.}" ]; then
+    _files=$(printf '%s\n' "$_files" | while IFS= read -r _f; do nh_is_doc "$_f" || printf '%s\n' "$_f"; done)
+  fi
+  [ -n "$_files" ] || nh_die "no tracked text files to review under ${_path:-.}"
+  _dir=$NH_STATE/shards
+  rm -rf "$_dir"; mkdir -p "$_dir"
+  _counts=$(cd "$NH_TOP" && printf '%s\n' "$_files" | tr '\n' '\000' | xargs -0 wc -l 2>/dev/null)
+  printf '%s\n' "$_counts" | NH_FILES=$_files awk -v max="$_max" -v dir="$_dir" '
+    BEGIN { n = split(ENVIRON["NH_FILES"], f, "\n"); for (i = 1; i <= n; i++) want[f[i]] = 1 }
+    {
+      c = $1 + 0; p = $0; sub(/^[ \t]*[0-9]+[ \t]/, "", p)
+      if (!(p in want)) next
+      if (k == 0) k = 1
+      if (cur > 0 && cur + c > max) { k++; cur = 0 }
+      cur += c; body[k] = body[k] sprintf("%s (%d lines)\n", p, c); lines[k] += c; cnt[k]++; total += c; nf++
+    }
+    END {
+      for (i = 1; i <= k; i++) {
+        out = dir "/shard-" i ".txt"
+        printf "# nahuya shard %d of %d: existing code to review in full (paths relative to the repo root)\n%s", i, k, body[i] > out
+        close(out)
+        printf "shard=%s files=%d lines=%d\n", out, cnt[i], lines[i]
+      }
+      printf "files=%d\nlines=%d\nshards=%d\n", nf, total, k
+    }'
+  if [ -n "$_loop" ]; then
+    nh_resolve_tip HEAD || nh_die "no commits yet"
+    _rd=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")
+    rm -rf "$_rd"; mkdir -p "$_rd"
+    printf '%s\n%s\n%s\n%s\n' "$NH_TIP" "$NH_TIP" "$NH_BRANCH" \
+      "$(cat "$_dir"/shard-*.txt | sed -n 's/.* (\([0-9]*\) lines)$/\1/p' | awk '{ s += $1 } END { print s + 0 }')" > "$_rd/session"
+    nh_snapshot > "$_rd/tree-1"
+    echo "ledger=$(nh_ledger_path "$NH_TIP" "$NH_BRANCH")"
+  fi
+}
+
+session_ledger() {
+  _rd=$NH_STATE/rounds/$(nh_branch_key "$(git symbolic-ref -q --short HEAD 2>/dev/null)")
+  [ -f "$_rd/session" ] || return 1
+  nh_ledger_path "$(sed -n 1p "$_rd/session")" "$(sed -n 3p "$_rd/session")"
+}
+
+cmd_log() {
+  [ $# -ge 5 ] || nh_die "usage: nahuya log ROUND DECISION CATEGORY ID TEXT..."
+  _r=$1; _d=$2; _c=$3; _id=$4; shift 4
+  case $_d in applied|rejected|needs-context) ;; *) nh_die "decision must be applied, rejected or needs-context" ;; esac
+  require_repo
+  _l=$(session_ledger) || nh_die "no review loop in progress; start with: nahuya diff --round 1"
+  mkdir -p "${_l%/*}"
+  [ -f "$_l" ] || printf '# round\tdecision\tcategory\tid\ttext (last line per id wins)\n' > "$_l"
+  _text=$(printf '%s' "$*" | tr '\t\r\n' '   ')
+  _c=$(printf '%s' "$_c" | tr '\t\r\n' '   ')
+  _id=$(printf '%s' "$_id" | tr '\t\r\n' '   ')
+  printf 'r%s\t%s\t%s\t%s\t%s\n' "$_r" "$_d" "$_c" "$_id" "$_text" >> "$_l"
+  echo "logged: $_d $_id"
+}
+
+cmd_mark() {
+  _keep=; [ "${1-}" = --keep-anchor ] && _keep=1
+  require_repo
+  nh_resolve_tip HEAD || nh_die "no commits yet"
+  _key=$(nh_branch_key "$NH_BRANCH")
+  _rd=$NH_STATE/rounds/$_key
+  _added=; _ledger=
+  if [ -f "$_rd/session" ]; then
+    _a=$(sed -n 1p "$_rd/session")
+    _ledger=$(nh_ledger_path "$_a" "$NH_BRANCH")
+    _added=$(sed -n 4p "$_rd/session")  # size when the loop started
+  fi
+  if [ -z "$_keep" ]; then
+    mkdir -p "$NH_STATE/anchors"
+    printf '%s\n' "$NH_TIP" > "$NH_STATE/anchors/$_key"
+    rm -f "$NH_STATE/blocks"
+  fi
+  if [ -n "$_ledger" ]; then
+    _counts=$(nh_ledger_final "$_ledger" | awk -F'\t' '{ c[$1]++ } END { printf "%d\t%d\t%d", c["applied"], c["rejected"], c["needs-context"] }')
+    [ -f "$NH_STATE/runs.tsv" ] || printf '# date\tbranch\tanchor\thead\tadded_lines\tapplied\trejected\tneeds_context\n' > "$NH_STATE/runs.tsv"
+    printf '%s\t%s\t%.12s\t%.12s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${NH_BRANCH:-detached}" \
+      "$(sed -n 1p "$_rd/session")" "$NH_TIP" "${_added:-0}" "$_counts" >> "$NH_STATE/runs.tsv"
+  fi
+  rm -rf "$_rd"
+  if [ -n "$_keep" ]; then echo "nahuya: review recorded; the push gate's anchor is unchanged"
+  else echo "nahuya: $(nh_short "$NH_TIP") marked as reviewed"; fi
+}
+
+cmd_skip() {
+  require_repo
+  nh_resolve_tip HEAD || nh_die "no commits yet"
+  mkdir -p "$NH_STATE"
+  printf '%s\n' "$NH_TIP" > "$NH_STATE/skip"
+  echo "nahuya: the next push of $(nh_short "$NH_TIP") skips review (a new commit cancels this)"
+}
+
+cmd_config() {
+  parse_defaults "$@"; _o=$IFS; IFS=$NH_NL; set -f; set -- $REST; set +f; IFS=$_o
+  _global=; _args=
+  for _a in "$@"; do
+    if [ "$_a" = --global ]; then _global=--global; else _args="$_args$_a$NH_NL"; fi
+  done
+  IFS=$NH_NL; set -f; set -- $_args; set +f; IFS=$_o
+  _inrepo=; nh_enter_repo && _inrepo=1
+  if [ $# -ge 1 ]; then
+    _k=$(nh_key "$1") || nh_die "unknown setting '$1'. Settings: gate threshold max-rounds model fix-mode layer"
+    [ -n "$_global" ] || [ -n "$_inrepo" ] || nh_die "not inside a git repository; add --global"
+    _gk=nahuya.$(printf '%s' "$_k" | tr _ -)
+    if [ $# -ge 2 ]; then
+      if [ "$2" = --unset ]; then
+        git config $_global --unset "$_gk" 2>/dev/null
+      else
+        _v=$(nh_norm "$_k" "$2") || nh_die "invalid value '$2' for $1. $(valid_values "$_k")"
+        git config $_global "$_gk" "$_v" || nh_die "could not write git config"
+      fi
+    fi
+  fi
+  printf 'nahuya settings%s\n' "${_inrepo:+ for $NH_TOP}"
+  for _k in $NH_KEYS; do
+    _vs=$(nh_cfg_src "$_k")
+    printf '  %-15s %-9s %s\n' "$(printf '%s' "$_k" | tr _ -)" "${_vs%%"$NH_TAB"*}" "(${_vs#*"$NH_TAB"})"
+  done
+  echo "Change: /nahuya:config KEY VALUE [--global]. Reset: /nahuya:config KEY --unset [--global]."
+}
+
+valid_values() {
+  case $1 in
+    gate|layer) echo "Use on or off." ;;
+    threshold|max_rounds) echo "Use a whole number of 1 or more." ;;
+    reviewer_model) echo "Use inherit, opus, fable, sonnet or haiku." ;;
+    fix_mode) echo "Use commit, amend or uncommitted." ;;
+  esac
+}
+
+cmd_stats() {
+  require_repo
+  _ledgers=$(ls "$NH_STATE"/ledger/*.tsv 2>/dev/null)
+  if [ -z "$_ledgers" ] && [ ! -f "$NH_STATE/runs.tsv" ]; then echo "nahuya: no reviews recorded in this repo yet"; return; fi
+  [ -z "$_ledgers" ] || echo "Findings by category (final decision per finding):"
+  if [ -n "$_ledgers" ]; then
+    _o=$IFS; IFS=$NH_NL; set -f
+    for _l in $_ledgers; do nh_ledger_final "$_l"; done
+    set +f; IFS=$_o
+  fi | awk -F'\t' '
+    NF >= 3 { t[$2]++; d[$2, $1]++; all[$1]++; n++ }
+    END {
+      if (!n) exit
+      printf "  %-24s %7s %8s %8s %13s\n", "category", "total", "applied", "rejected", "needs-context"
+      for (c in t) printf "  %-24s %7d %8d %8d %13d\n", c, t[c], d[c, "applied"], d[c, "rejected"], d[c, "needs-context"]
+      printf "  %-24s %7d %8d %8d %13d\n", "all", n, all["applied"], all["rejected"], all["needs-context"]
+      printf "  applied rate: %.0f%%\n", 100 * all["applied"] / n
+    }'
+  if [ -f "$NH_STATE/runs.tsv" ]; then
+    echo "Runs by unreviewed size:"
+    awk -F'\t' '!/^#/ && NF >= 8 {
+        s = $5 + 0; b = s < 500 ? "<500" : s < 1000 ? "500-999" : s < 2000 ? "1000-1999" : "2000+"
+        r[b]++; a[b] += $6; j[b] += $7; x[b] += $8 }
+      END { printf "  %-10s %5s %13s %14s\n", "lines", "runs", "applied/run", "rejected/run"
+        split("<500 500-999 1000-1999 2000+", order, " ")
+        for (i = 1; i <= 4; i++) { k = order[i]; if (r[k]) printf "  %-10s %5d %13.1f %14.1f\n", k, r[k], a[k] / r[k], j[k] / r[k] } }' "$NH_STATE/runs.tsv"
+  fi
+}
+
+_cmd=${1-help}; [ $# -gt 0 ] && shift
+case $_cmd in
+  status) cmd_status "$@" ;;
+  diff) cmd_diff "$@" ;;
+  shards) cmd_shards "$@" ;;
+  log) cmd_log "$@" ;;
+  mark) cmd_mark "$@" ;;
+  skip) cmd_skip "$@" ;;
+  config) cmd_config "$@" ;;
+  stats) cmd_stats "$@" ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 1 ;;
+esac

@@ -1,0 +1,19 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # ubuntu: sh is dash; macos: sh is bash 3.2 in POSIX mode; windows: Git Bash.
+      - name: Run tests
+        shell: bash
+        run: sh tests/run.sh

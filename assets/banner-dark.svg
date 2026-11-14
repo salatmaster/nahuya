@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="t d">
+  <title id="t">nahuya Claude Code plugin: over-engineering reviewer</title>
+  <desc id="d">A diff where an unneeded factory, base class and retry wrapper are deleted and replaced by one line, while a route handler and an operator setting are left untouched.</desc>
+  <rect width="1280" height="420" rx="24" fill="#0d1117"/>
+
+  <text x="72" y="175" fill="#f0f6fc" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="104" font-weight="800" letter-spacing="-4">nahuya<tspan fill="#ff5577">.</tspan></text>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="76" y="230" fill="#9198a1" font-size="27" font-weight="500">на*уя? — “what the hell is this for?”</text>
+    <text x="76" y="294" fill="#f0f6fc" font-size="25" font-weight="650">The over-engineering reviewer for Claude Code.</text>
+    <text x="76" y="334" fill="#9198a1" font-size="22">Proves before it cuts. Reviews before you push.</text>
+  </g>
+
+  <rect x="664" y="44" width="560" height="332" rx="16" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" xml:space="preserve">
+    <text x="692" y="84" fill="#9198a1" font-size="17">nahuya:polish · 5 findings applied</text>
+    <rect x="680" y="102" width="528" height="30" rx="4" fill="#3d1218"/>
+    <text x="692" y="123" fill="#ffa198" font-size="16.5">- class NotifierFactory:</text>
+    <rect x="680" y="134" width="528" height="30" rx="4" fill="#3d1218"/>
+    <text x="692" y="155" fill="#ffa198" font-size="16.5">-     _registry = {"email": EmailNotifier}</text>
+    <rect x="680" y="166" width="528" height="30" rx="4" fill="#3d1218"/>
+    <text x="692" y="187" fill="#ffa198" font-size="16.5">- class Notifier(ABC):  # one implementation</text>
+    <rect x="680" y="198" width="528" height="30" rx="4" fill="#3d1218"/>
+    <text x="692" y="219" fill="#ffa198" font-size="16.5">- def send_with_retry(n, to, msg, retries=3,</text>
+    <rect x="680" y="230" width="528" height="30" rx="4" fill="#3d1218"/>
+    <text x="692" y="251" fill="#ffa198" font-size="16.5">-         backoff=0.0, on_failure=None): ...</text>
+    <rect x="680" y="272" width="528" height="30" rx="4" fill="#12301d"/>
+    <text x="692" y="293" fill="#7ee2a8" font-size="16.5">+ OUTBOX.append((email, f"Welcome, {email}!"))</text>
+    <text x="692" y="338" fill="#9198a1" font-size="16.5">untouched: @route("/health") via ROUTES</text>
+    <text x="692" y="362" fill="#9198a1" font-size="16.5">untouched: WELCOME_SENDER, set by ops</text>
+  </g>
+</svg>

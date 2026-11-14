@@ -1,0 +1,5 @@
+# Shell scripts must keep LF endings on Windows checkouts.
+*.sh text eol=lf
+bin/* text eol=lf
+*.md text eol=lf
+*.json text eol=lf

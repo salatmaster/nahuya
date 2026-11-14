@@ -1,0 +1,12 @@
+{
+  "name": "nahuya",
+  "owner": { "name": "salatmaster" },
+  "plugins": [
+    {
+      "name": "nahuya",
+      "source": "./",
+      "description": "Over-engineering reviewer, pre-push review-and-fix loop, and a tiny disclosure layer for Claude Code.",
+      "category": "productivity"
+    }
+  ]
+}
