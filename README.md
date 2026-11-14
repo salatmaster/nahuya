@@ -116,7 +116,7 @@ flowchart TD
 - **Recognized as a push:** `git push` and `gh pr create`. This includes pushes inside chains (`commit && push`), subshells and `bash -c`, behind `git -C` or `cd`, and through git aliases.
 - **Ignored:** dry runs, deletions and tag-only pushes.
 - **Counted:** added lines of non-test, non-generated code since the last completed review. Deletions don't count.
-- **Excluded:** tests, lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and code merged in from your main branch.
+- **Excluded:** tests (including Rust modules declared under `#[cfg(test)]`), lockfiles, `vendor/`, `node_modules/`, `dist/`, `build/`, minified and protobuf output, files marked `linguist-generated` or `linguist-vendored`, your `exclude:` globs, and code merged in from your main branch.
 
 </details>
 
@@ -177,7 +177,7 @@ You can also run it by hand at any time, including on your whole codebase:
 /nahuya:polish tests all        # only the tests, across the whole repo
 ```
 
-Put `tests` first to work on test code only. It combines with every target: `tests` alone covers the tests in your unpushed changes, and `tests all`, `tests src/` or `tests main..HEAD` work as usual. Test files are found by path. Rust sources with inline `#[cfg(test)]` modules count as well.
+Put `tests` first to work on test code only. It combines with every target: `tests` alone covers the tests in your unpushed changes, and `tests all`, `tests src/` or `tests main..HEAD` work as usual. Test files are found by path and name. In Rust, modules declared under `#[cfg(test)]` count as test files, and in other sources only the lines inside `#[cfg(test)]` and `#[test]` items count as tests. Data such as JSON or YAML never counts as test code, even under `tests/` or `spec/`. Test helpers with ordinary names, like `testkit.rs`, are left to Claude: when it plans the run, it tags such components `[tests]`, and it can untag code that was taken for tests by mistake. A component that loses all its files to the test filter is reported, never dropped silently.
 
 For the whole codebase or a folder, nahuya plans the run before spending anything:
 
@@ -186,9 +186,9 @@ For the whole codebase or a folder, nahuya plans the run before spending anythin
 - **Tests are your call.** Claude asks what to do with them:
   - leave them alone;
   - clean up duplicates and copy-pasted setup;
-  - also remove worthless tests.
+  - also remove tests that add nothing.
 
-  A test counts as worthless if it passes no matter how the code breaks: it has no real assertion, checks only what a mock returns, restates the type system, or has been disabled for good. Each removal needs a mutation-style argument: no plausible bug in the target code would make that test fail. Regression, money, security and data tests stay, and so does the last test of any behavior.
+  A test adds nothing if it passes no matter how the code breaks, or if it only repeats a neighbor. The first kind has no real assertion, checks only what a mock returns, restates the type system, computes the expected value with the code under test, or has been disabled for good. The second kind exercises the same behavior on the same class of input as a test that stays. Each removal needs a mutation-style argument: either no plausible bug would make that test fail, or every bug that fails it also fails the test that stays. Regression tests stay, and so does the only test that catches a money, security or data bug, and the last test of any behavior. A test isn't protected just because it touches money.
 - **A duplicates pass.** A cheap clone detector scans the whole target for near-identical code across files. One more reviewer then reads both sides of each pair. This catches what a per-shard review can't see, such as two modules built on the same skeleton.
 - **A budget.** By default a run uses at most 10 reviewer subagents (`max-agents`). If it needs more, Claude asks first and shows the numbers for each option:
   - review the most suspicious components now and the rest as a later batch (`--skip N`);
@@ -308,7 +308,7 @@ Yes. Before a push, it removes them from the code being pushed, and on demand fr
 - dependencies added for a few lines;
 - logic duplicated across files, and boilerplate that a helper would fold;
 - comments that restate the code, and stale TODOs;
-- redundant tests and copied test setup, and, if you ask, worthless tests that can't fail;
+- redundant tests and copied test setup, and, if you ask, tests that can't fail or only repeat a neighbor;
 
 To clean up existing code, run `/nahuya:polish all` or `/nahuya:polish src/`.
 
@@ -386,7 +386,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 128 tests; needs only sh, git and awk
+sh tests/run.sh                     # 151 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

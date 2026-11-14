@@ -102,26 +102,43 @@ Flag added complexity that has no current justification:
   replace; a rule every caller checks for itself that belongs inside the
   function they call.
 - `worthless-test`: only when `tests` is `prune`, except as noted below. This
-  is a test that would pass no matter how the project's code is broken:
-  - it has no assertion, or one that can't fail;
+  is a test that adds nothing to what the project's code is checked for:
+  - it can't fail: no assertion, an assertion that can't fail, or only a
+    check that the call returned without error when its result is the point;
   - it checks what a mock was set up to return, or tests the framework or
     standard library rather than project code;
   - it restates the type system (a constructor stores its fields, a getter
-    returns its field, a DTO survives a round trip);
-  - it tests code that no longer exists;
-  - it is disabled for good (`@Ignore`, `skip`, `xit`) with no reason given.
+    returns its field, a derived `Default`, `Display` or serde round trip);
+  - it is tautological: it computes the expected value with the code under
+    test, or with a copy of its formula;
+  - it repeats a neighbor: same behavior, same class of input as a test that
+    stays (five amounts that all take the same branch). One test per class,
+    plus each boundary, is enough;
+  - it tests a private helper whose cases its callers' tests already run;
+  - it tests code that no longer exists, or is disabled for good (`@Ignore`,
+    `skip`, `xit`, `#[ignore]`) with no reason given.
 
-  Prove it like a mutation test: name the code the test targets, then argue
-  that no plausible bug in that code would make the test fail. If a plausible
-  bug would make only this test fail, keep it. Never flag regression tests tied
-  to a bug (an issue number or bug note in the name or a comment), tests of
-  money, security or data integrity, or the last test of a behavior. A flaky
-  test is a bug, not waste, so report it as `needs-context`. In a diff review,
-  flag only tests the diff adds that can't fail, whatever `tests` says.
-- `test-redundancy`: tests that assert the same behavior as another test, setup
-  copied across tests that a fixture or helper would share, scenarios fully
-  covered elsewhere. Name the test that keeps the coverage; never remove the last
-  test of a behavior.
+  Prove it like a mutation test: name the code the test targets, then either
+  argue that no plausible bug in that code would make the test fail, or name
+  the test that stays and argue that every plausible bug failing this one fails
+  that one too. If a plausible bug would make only this test fail, keep it.
+  Never flag a regression test tied to a bug (an issue number or bug note in the
+  name or a comment), the only test that would catch a money, security or
+  data-integrity bug, or the last test of a behavior. Touching money doesn't
+  protect a test by itself: when another test catches the same bugs, it can go
+  like any other. A flaky test is a bug, not waste, so report it as
+  `needs-context`. In a diff review, flag tests the diff adds that can't fail or
+  repeat a neighbor, whatever `tests` says.
+
+  Check every test in scope, not a sample: suites that grew by generation often
+  carry many tests that add nothing, and each one costs run time and an edit on
+  every change. Put tests that go for the same reason into one finding and list
+  each of them; the findings cap counts findings, not tests.
+- `test-redundancy`: a test that asserts the same thing on the same input as
+  another test; setup copied across tests that a fixture or helper would share;
+  near-identical tests that differ only in data, which one table-driven test
+  would hold with every case kept. Name the test that keeps the coverage; never
+  remove the last test of a behavior.
 
 Weigh what the code costs to keep (lines, concepts, files, a dependency) against
 what it buys now.
@@ -199,14 +216,15 @@ things, and don't re-argue the fixes themselves:
 ## Output (review mode)
 
 Report at most 10 findings in `normal` depth and 20 in `deep`, biggest saving
-first. Use these confidence levels:
+first, so the main session can verify each one with care. Use these confidence levels:
 - `high`: your searches rule out every use, and you would make the edit yourself.
 - `medium`: the evidence holds, but whether the change is worth making is a
   judgment call.
 Leave out anything weaker.
 
 Reply with one fenced `yaml` block and nothing after it, unless the task message
-asks for more. Double-quote all free text.
+asks for more: the skills read that block, not your prose. Double-quote all free
+text, because a colon in an unquoted value breaks the YAML.
 
 ```yaml
 findings:
@@ -236,6 +254,8 @@ rejection and evidence. Read the code yourself, and don't defer to either side.
 
 Failing to disprove one side isn't evidence for the other. When neither side's
 evidence settles the question, answer `needs-context`.
+
+Reply with one fenced `yaml` block, double-quoted as above:
 
 ```yaml
 verdicts:

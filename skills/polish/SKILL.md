@@ -16,14 +16,18 @@ needs your own evidence.
 If the argument is `all` (the whole repo) or a folder rather than a range,
 follow **Existing code** at the end instead of Setup and Rounds.
 
+Every reviewer you launch, judges included, gets `model` unless the
+`reviewer_model` setting is `inherit`.
+
 **Tests only.** If the first argument is `tests` (`tests`, `tests all`,
 `tests src/`, `tests main..HEAD`), drop it and run the same flow on test code
 only:
 - add `--only-tests` to every `nahuya diff`, `inventory`, `shards` and `clones`
   command;
-- give every reviewer `only_tests: yes`;
-- ask only whether to clean duplicates (`--tests`) or also remove worthless
-  tests (`--prune-tests`), unless the arguments already say;
+- give every reviewer `only_tests: yes` and `tests` (`prune` if the user chose
+  `--prune-tests`, otherwise `dedupe`);
+- ask only whether to clean duplicates (`--tests`) or also remove tests that
+  add nothing (`--prune-tests`), unless the arguments already say;
 - with no further argument, cover the tests in the commits waiting to be
   pushed. Skip the "nothing to polish" stop in Setup step 2; stop only if
   round 1's diff has no files;
@@ -38,6 +42,9 @@ only:
    count, the effective settings, `head_pushed`, the check command, the ledger
    path, and any files with uncommitted changes (`uncommitted=`). Findings in
    those files go to the report and are not applied.
+
+   If it prints `range=none`, there is no upstream to compare against: ask for
+   a `base..tip` range or suggest a folder, and stop.
 
    If there is no argument and `unreviewed_added_lines` is 0, there is nothing
    to polish. Tell the user, suggest `/nahuya:polish all` or a folder for
@@ -54,12 +61,14 @@ The reviewer's `depth` is the `depth` setting; `auto` means `normal` here.
 For k = 1 … max_rounds:
 
 1. Run `nahuya diff --round k` (for round 1, append $ARGUMENTS). It writes this
-   round's diff and prints its path. Add `--full` if the previous round hit the
-   findings cap.
-2. Launch a fresh `nahuya:reviewer`. Never resume an earlier one. Pass `model`
-   unless reviewer_model is `inherit`. Give it `mode: review`, `round: k`,
-   `depth`, the diff path, the ledger path, and `requested`, and nothing else. It
-   is useful because it hasn't seen your reasoning.
+   round's diff and prints its path. Add `--full` if the previous round
+   returned 10 findings (20 in `deep`), the reviewer's cap, since it may have
+   left some out.
+2. Launch a fresh `nahuya:reviewer`. Never resume an earlier one. Give it
+   `mode: review`, `round: k`, `depth`, the diff path, the ledger path and
+   `requested`, plus `only_tests` and `tests` in a tests-only run. Don't pass
+   your own reasoning about the code: the reviewer is useful because it hasn't
+   seen it.
 3. A `lost-behavior` finding means an earlier fix of this run dropped
    something. If it holds, restore the behavior, by reverting that edit if
    needed, before anything else. For every other finding, read the code and
@@ -76,8 +85,8 @@ For k = 1 … max_rounds:
 
    Record each decision with
    `nahuya log <k> <applied|rejected|needs-context> <category> "<id>" "<change or reason>"`.
-4. Check whether you rejected any `confidence: high` finding on evidence other than
-   a user request. If so, write each one verbatim, with your rejection and
+4. Check whether you rejected any `confidence: high` finding on evidence other
+   than a user request. If so, write each one verbatim, with your rejection and
    evidence, to `disputes-r<k>.md` next to the ledger. Then launch one fresh
    reviewer with `mode: judge`, the disputes path and `requested`. Act on its
    verdicts and log them:
@@ -130,48 +139,60 @@ is `deep` unless the `depth` setting is `normal`.
    `shard-lines`, skip planning: run `nahuya shards <target>` and go to step 3.
 2. **Plan logical components.** Skim the README and the entry points (main,
    routes, handlers, jobs, CLI commands) to see the real flows. Then group the
-   code by what it does: a feature, a service, a layer, a package. Code that does similar jobs belongs together even
-   when it lives in different directories, because that is where duplication
-   hides. Aim for about `shard-lines` per component and at most twice that; look
-   inside big areas with `nahuya inventory <target> --files <dir>` and split them.
+   code by what it does: a feature, a service, a layer, a package. Code that
+   does similar jobs belongs together even when it lives in different
+   directories, because that is where duplication hides. Aim for about
+   `shard-lines` per component and at most twice that; look inside big areas
+   with `nahuya inventory <target> --files <dir>` and split them.
    Put the components most likely to be over-engineered or bloated first. Put
    code you'd leave out (one-off research, examples or generated code the filters
-   missed) under a `## skip — <reason>` component. Write the plan to the path
-   `inventory` printed:
+   missed) under a `## skip — <reason>` component.
+
+   Check what counts as tests. The map counts test files by path and name, and
+   Rust `#[cfg(test)]` modules and inline tests. A test helper, harness, fixture
+   builder or test-support crate with an ordinary name slips through: add
+   `[tests]` to its component's header. If the map took production code for
+   tests, add `[not tests]`. Write the plan to the path `inventory` printed:
 
        ## liquidation — both liquidators share one skeleton
        src/liq/
        src/firm/liquidator.rs
-       ## web api
-       src/web/
+       ## scenario harness [tests]
+       src/testkit.rs
+       src/scenarios/
        ## skip — one-off research scripts
        research/
 
    A path claims everything under it, and the longest matching path wins. Run
    `nahuya shards <target> --plan <plan> <flags>` and fix the plan until it
-   reports no `unassigned` lines.
+   reports no `unassigned` lines and no `empty` components.
 3. **Ask once, only what is open.** Put the open questions in one message:
    - **Tests:** unless the arguments say `--no-tests`, `--tests` or
      `--prune-tests`, and the inventory shows tests, ask how to treat them:
      - **leave them alone** (`--no-tests`);
      - **clean duplicates and copy-pasted setup** (`--tests`);
-     - **also remove worthless tests** (`--prune-tests`). These are tests that
-       pass no matter how the code breaks: no real assertion, checking a mock,
-       restating the type system, or disabled for good. Regression, money,
-       security and data tests, and the last test of a behavior, always stay.
-   - **Budget:** count the reviewers: one per component, one for the duplicates pass in `deep`, and two kept for round 2 and a possible judge. If that exceeds
-     `max_agents` and the arguments have no `--top` or `--skip`, offer:
+     - **also remove tests that add nothing** (`--prune-tests`): ones that pass
+       no matter how the code breaks (no real assertion, checking a mock,
+       restating the type system, computing the expected value with the code
+       under test), and ones that repeat a neighbor on the same class of input.
+       Regression tests, the only test that catches a money, security or data
+       bug, and the last test of a behavior always stay.
+   - **Budget:** count the reviewers: one per component and one for the
+     duplicates pass in `deep`. A polish run also needs one per later round and
+     a judge for disputes. If that exceeds `max_agents` and the arguments have
+     no `--top` or `--skip`, offer:
      - **most suspicious first:** `--top <budget>`, the rest later with
        `--skip`;
      - **fewer, bigger components:** merge components in the plan. Above
        roughly 6000 lines each, attention per file drops;
-     - **everything:** about `est_tokens` tokens plus verification. Say plainly that this
-       is expensive;
+     - **everything:** about `est_tokens` tokens, plus verification in a
+       polish run. Say plainly that this is expensive;
      - **a narrower folder.**
    - **Left out:** list the skipped folders (`--with-nonprod` includes them) and
      your `## skip` components with their reasons.
 
-   Then run the final `nahuya shards` command with the choices and `--loop`; that starts the ledger.
+   Then run the final `nahuya shards` command with the choices and `--loop`;
+   that starts the ledger.
 4. **Settings.** Run `nahuya status` with no argument for the settings and check
    command, use the ledger path that `shards` printed, and do Setup steps 3–4.
    `requested` is the user's words for this run. Note the current HEAD as the
@@ -182,14 +203,17 @@ is `deep` unless the `depth` setting is `normal`.
    ledger path and `requested`. You may launch the next shard's reviewer while you
    verify the current one. Verify, apply, log and run the judge exactly as in
    Rounds steps 3–5. Log with round `1`. After each shard, run the check and,
-   with fix_mode `commit`, commit that shard's edits. A change that spans
-   several files gets its own commit.
+   unless fix_mode is `uncommitted`, commit that shard's edits as a new commit,
+   even with `amend`: a cleanup of shipped code must not fold into the user's
+   last commit. A change that spans several shards, such as one from the
+   duplicates pass, gets a commit of its own.
 6. **Duplicates (deep).** Run `nahuya clones <same target and test flag>`. If
    `pairs` is above 0, launch one more fresh reviewer with `clones: <path>`
    instead of `files`, and handle its findings the same way.
 7. **Later rounds** work as in Rounds, using `nahuya diff --round k`, which
    covers the fixes made so far.
 8. **Finish** as above, with these differences:
+   - `amend` commits like `commit`, for the reason in step 5;
    - run `nahuya mark --keep-anchor` instead of `nahuya mark`;
    - push only if the user asked you to.
 

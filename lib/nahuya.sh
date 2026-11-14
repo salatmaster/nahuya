@@ -245,6 +245,113 @@ nh_is_test() {
   return 1
 }
 
+# Data and markup. Never test code, even under tests/ or spec/.
+nh_is_data() {
+  case $1 in
+    *.json|*.jsonc|*.json5|*.yaml|*.yml|*.xml|*.csv|*.tsv|*.toml|*.ini|*.txt|*.lock|*.snap|\
+    *.html|*.htm|*.css|*.scss|*.svg|*.md|*.mdx|*.rst|\
+    *.JSON|*.YAML|*.YML|*.XML|*.CSV|*.HTML|*.MD)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# Test code in Rust sources, where the compiler marks it rather than the path.
+# cwd: anywhere in the repo. Prints "path<TAB>all" for whole test files (modules
+# declared under #[cfg(test)], and their submodules) and "path<TAB>N" for files
+# whose #[cfg(test)] / #[test] items span N lines. Paths are repo-relative.
+nh_rust_tests() {
+  (
+    cd "${NH_TOP:-.}" || exit 0
+    _rs=$(git -c core.quotePath=false ls-files -- '*.rs' 2>/dev/null)
+    [ -n "$_rs" ] || exit 0
+    git -c core.quotePath=false grep -l -I -E '#\[(cfg\((all\()?test[,)]|test\])' -- '*.rs' 2>/dev/null |
+      while IFS= read -r _f; do printf '\001FILE %s\n' "$_f"; cat "$_f"; printf '\n'; done |
+      NH_RS=$_rs LC_ALL=C awk '
+        function endfile() {
+          if (file == "") return
+          if (item) cnt[file] += ln - start + 1
+          item = 0
+        }
+        function enditem() { cnt[file] += ln - start + 1; item = 0 }
+        # Scan one line of an open test item: track strings, comments and brackets.
+        function scan(s,   i, n, c, rest) {
+          n = length(s); i = 1
+          while (i <= n) {
+            c = substr(s, i, 1)
+            if (st == 1) { if (c == "\\") { i += 2; continue } if (c == "\"") st = 0; i++; continue }
+            if (st == 2) {
+              if (c == "\"" && substr(s, i + 1, rh) == hashes) { st = 0; i += rh + 1; continue }
+              i++; continue
+            }
+            if (st == 3) {
+              if (c == "/" && substr(s, i + 1, 1) == "*") { nest++; i += 2; continue }
+              if (c == "*" && substr(s, i + 1, 1) == "/") { if (--nest == 0) st = 0; i += 2; continue }
+              i++; continue
+            }
+            if (c == "/" && substr(s, i + 1, 1) == "/") return
+            if (c == "/" && substr(s, i + 1, 1) == "*") { st = 3; nest = 1; i += 2; continue }
+            if (c == "\"") { st = 1; i++; continue }
+            if (c == "r" && (i == 1 || substr(s, i - 1, 1) !~ /[A-Za-z0-9_]/) && match(substr(s, i + 1), /^#*"/)) {
+              rh = RLENGTH - 1; hashes = substr(s, i + 1, rh); st = 2; i += RLENGTH + 1; continue
+            }
+            if (c == "\047") {
+              rest = substr(s, i)
+              if (match(rest, /^\047(\\[^\047]*|[^\047\\])\047/)) { i += RLENGTH; continue }
+              i++; continue
+            }
+            if (c == "(" || c == "[") par++
+            else if (c == ")" || c == "]") par--
+            else if (c == "{") { depth++; opened = 1 }
+            else if (c == "}") { depth--; if (depth < 0 || (opened && depth == 0)) { enditem(); return } }
+            else if ((c == ";" || c == ",") && depth == 0 && par == 0 && !opened) {
+              if (c == ";" && match(decl, /(^|[^A-Za-z0-9_])mod[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*$/)) {
+                m = substr(decl, RSTART, RLENGTH); sub(/^.*mod[ \t]+/, "", m); sub(/[ \t]+$/, "", m)
+                nd++; dpar[nd] = file; dname[nd] = m; dpath[nd] = pathattr
+              }
+              enditem(); return
+            }
+            if (depth == 0 && !opened) decl = decl c
+            i++
+          }
+          decl = decl " "
+        }
+        /^\001FILE / { endfile(); file = substr($0, 7); ln = 0; next }
+        {
+          ln++
+          if (!item) {
+            if ($0 !~ /^[ \t]*#\[(cfg\((all\()?test[,)]|test\])/) next
+            item = 1; start = ln; depth = 0; par = 0; opened = 0; st = 0; decl = ""; pathattr = ""
+          }
+          if (match($0, /#\[path[ \t]*=[ \t]*"[^"]*"/)) { pathattr = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", pathattr); sub(/"$/, "", pathattr) }
+          scan($0)
+        }
+        function dirof(p) { if (!sub(/\/[^\/]*$/, "", p)) p = ""; return p }
+        function under(d, f) { return d == "" ? f : d "/" f }
+        END {
+          endfile()
+          n = split(ENVIRON["NH_RS"], a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") rs[a[i]] = 1
+          # #[cfg(test)] mod NAME; -> NAME.rs or NAME/mod.rs (a crate root looks in its
+          # own directory, any other file in a directory named after it)
+          for (j = 1; j <= nd; j++) {
+            p = dpar[j]; d = dirof(p); b = p; sub(/.*\//, "", b)
+            if (dpath[j] != "") { c = under(d, dpath[j]); while (sub(/(^|\/)\.\//, "/", c)) ; sub(/^\//, "", c); if (c in rs) whole[c] = 1; continue }
+            s = b; sub(/\.rs$/, "", s)
+            own = (b == "main.rs" || b == "lib.rs" || b == "mod.rs") ? d : under(d, s)
+            split(own SUBSEP d, cand, SUBSEP)
+            for (k = 1; k <= 2; k++) {
+              m = under(cand[k], dname[j])
+              if ((m ".rs") in rs) { whole[m ".rs"] = 1; tdir[m "/"] = 1; break }
+              if ((m "/mod.rs") in rs) { whole[m "/mod.rs"] = 1; tdir[m "/"] = 1; break }
+            }
+          }
+          for (f in rs) for (t in tdir) if (index(f, t) == 1) { whole[f] = 1; break }
+          for (f in whole) print f "\tall"
+          for (f in cnt) if (!(f in whole) && cnt[f] > 0) print f "\t" cnt[f]
+        }'
+  )
+}
+
 # Prose and repo metadata: skipped when reviewing a whole directory of existing code.
 nh_is_doc() {
   case $1 in
@@ -322,19 +429,23 @@ nh_keep() {
   _ex=$(nh_user_excludes)
   _attr=$(printf '%s\n' "$_paths" | git check-attr --stdin linguist-generated linguist-vendored 2>/dev/null |
     awk -F': ' '$3 == "set" || $3 == "true" { print $1 }')
-  _inline=
-  if [ "$1" = review ] && [ -n "${NH_ONLY_TESTS-}" ]; then
-    # tests-only runs: test files by path, plus sources holding inline tests (Rust)
-    _inline=$(cd "${NH_TOP:-.}" && printf '%s\n' "$_paths" | tr '\n' '\000' |
-      xargs -0 git grep -l -E '#\[(cfg\(test\)|test)\]' -- 2>/dev/null)
+  # Rust test modules: whole test files ("all") and files with inline tests
+  _rust=
+  if [ "$1" = count ] || [ -n "${NH_ONLY_TESTS-}" ]; then
+    case $_paths in *.rs|*.rs"$NH_NL"*) _rust=$(nh_rust_tests) ;; esac
   fi
   printf '%s\n' "$_paths" | while IFS= read -r _p; do
     [ -n "$_p" ] || continue
     nh_builtin_excluded "$_p" && continue
-    if [ "$1" = count ] && nh_is_test "$_p"; then continue; fi
     nh_match_any "$_p" "$_ex" && continue
-    if [ "$1" = review ] && [ -n "${NH_ONLY_TESTS-}" ] && ! nh_is_test "$_p"; then
-      printf '%s\n' "$_inline" | grep -Fxq -- "$_p" || continue
+    if [ "$1" = count ]; then
+      nh_is_test "$_p" && continue
+      printf '%s\n' "$_rust" | grep -Fxq -- "$_p${NH_TAB}all" && continue
+    elif [ -n "${NH_ONLY_TESTS-}" ]; then
+      nh_is_data "$_p" && continue
+      if ! nh_is_test "$_p"; then
+        printf '%s\n' "$_rust" | cut -f1 | grep -Fxq -- "$_p" || continue
+      fi
     fi
     printf '%s\n' "$_p"
   done | NH_ATTR=$_attr awk 'BEGIN { n = split(ENVIRON["NH_ATTR"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($0 in skip)'

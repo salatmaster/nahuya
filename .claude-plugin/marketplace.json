@@ -1,6 +1,7 @@
 {
   "name": "nahuya",
   "owner": { "name": "salatmaster" },
+  "description": "nahuya: a Claude Code plugin that reviews code for over-engineering and bloat.",
   "plugins": [
     {
       "name": "nahuya",

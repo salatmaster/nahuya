@@ -174,6 +174,10 @@ grep -q 'tests/test_f9.py' "$d" && ok || bad "test-only diff keeps tests"
 grep -q 'src/f9.py' "$d" && bad "test-only diff kept production code" || ok
 
 sh "$NAHUYA" diff --target src/a.py >/dev/null 2>&1 && bad "path accepted by diff --target" || ok
+sh "$NAHUYA" diff --target tests HEAD~1..HEAD | grep -q '^diff=' && ok || bad "diff takes the tests keyword"
+# the gate leaves out Rust modules declared under #[cfg(test)]
+printf 'mod a;\n#[cfg(test)]\nmod scen;\nfn main() {}\n' > src/main.rs; lines src/a.rs 5; lines src/scen.rs 700; commit rustgate
+eq "rust test module not counted" "$(sh "$NAHUYA" status | sed -n 's/^unreviewed_added_lines=\([0-9]*\).*/\1/p')" 29
 
 # plugin settings saved by /plugin configure
 mkdir -p "$HOME/.claude"
@@ -243,10 +247,51 @@ sh "$NAHUYA" shards all --prune-tests | grep -q '^test_mode=prune$' && ok || bad
 printf 'fn add(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() { assert_eq!(super::add(1, 2), 3); }\n}\n' > lib/calc.rs; commit rust
 out=$(sh "$NAHUYA" shards all --only-tests)
 printf '%s\n' "$out" | grep -q '^scope=tests-only' && ok || bad "only-tests scope: $out"
-grep -q 'tests/test_x.py' .git/nahuya/shards/all/*.txt && ok || bad "only-tests keeps test files"
-grep -q 'lib/calc.rs' .git/nahuya/shards/all/*.txt && ok || bad "only-tests keeps inline rust tests"
-grep -q 'lib/a.py' .git/nahuya/shards/all/*.txt && bad "only-tests kept production code" || ok
+TS=.git/nahuya/shards/tests-all
+grep -q 'tests/test_x.py' $TS/*.txt && ok || bad "only-tests keeps test files"
+grep -q '^lib/calc.rs (5 test lines of 6)$' $TS/*.txt && ok || bad "only-tests counts inline rust test lines: $(cat $TS/*.txt)"
+grep -q 'lib/a.py' $TS/*.txt && bad "only-tests kept production code" || ok
 sh "$NAHUYA" shards all --only-tests --no-tests >/dev/null 2>&1 && bad "contradictory test flags accepted" || ok
+# Rust: modules declared under #[cfg(test)] are test files; strings and comments don't confuse the count
+mkdir -p crate/src/kit
+printf 'mod core;\n#[cfg(test)]\nmod scenarios;\n#[cfg(test)]\n#[path = "harness_impl.rs"]\nmod harness;\n#[cfg(test)]\nmod kit;\nfn main() {}\n' > crate/src/main.rs
+printf 'pub fn f() -> &'"'"'static str { "}" }\n#[cfg(test)]\nmod tests {\n    // a } in a comment\n    #[test]\n    fn t() { assert_eq!(super::f(), "}"); let _c = '"'"'{'"'"'; }\n}\n' > crate/src/core.rs
+lines crate/src/scenarios.rs 50; lines crate/src/harness_impl.rs 30; lines crate/src/kit/mod.rs 5; lines crate/src/kit/world.rs 40
+commit rustmods
+rt=$(cd crate && NH_TOP=$WORK/solo nh_rust_tests | sort | tr '\t\n' ':;')
+eq "rust test modules" "$rt" "crate/src/core.rs:6;crate/src/harness_impl.rs:all;crate/src/kit/mod.rs:all;crate/src/kit/world.rs:all;crate/src/main.rs:7;crate/src/scenarios.rs:all;lib/calc.rs:5;"
+sh "$NAHUYA" shards all --only-tests >/dev/null
+grep -q '^crate/src/kit/world.rs (40 lines)$' $TS/*.txt && ok || bad "submodule of a test module"
+sh "$NAHUYA" shards all --no-tests >/dev/null
+grep -q 'crate/src/scenarios.rs' .git/nahuya/shards/all/*.txt && bad "--no-tests kept a rust test module" || ok
+grep -q 'crate/src/core.rs' .git/nahuya/shards/all/*.txt && ok || bad "--no-tests dropped code with inline tests"
+# data is never test code; inventory shows tests and data
+mkdir -p spec; lines spec/api.json 200; lines spec/user_spec.rb 10; commit specdata
+sh "$NAHUYA" shards all --only-tests >/dev/null
+grep -q 'spec/api.json' $TS/*.txt && bad "data counted as tests" || ok
+grep -q 'spec/user_spec.rb' $TS/*.txt && ok || bad "spec code kept"
+out=$(sh "$NAHUYA" inventory all --only-tests)
+printf '%s\n' "$out" | grep -q '^spec/  files=2 lines=210 tests=10 data=200' && ok || bad "inventory tests and data: $out"
+printf '%s\n' "$out" | grep -q 'shards/tests-all/plan.md' && ok || bad "tests-only plan path"
+sh "$NAHUYA" inventory all --files crate/src/ | grep -q '^    crate/src/core.rs  lines=7 tests=6' && ok || bad "inventory inline tests: $(sh "$NAHUYA" inventory all --files crate/src/)"
+# plan tags correct the test split; a component that loses every file is reported
+lines lib/fixtures_builder.py 60; commit fb
+printf '## helpers [tests]\nlib/fixtures_builder.py\n## lib\nlib/\n## rust\ncrate/\n## web\nweb/\n## rest\nx.py\nspec/\ntests/\nCargo.toml\nplan.md\nplan2.md\ndata/\n' > plan3.md
+out=$(sh "$NAHUYA" shards all --only-tests --plan plan3.md)
+printf '%s\n' "$out" | grep -q 'component=helpers$' && ok || bad "[tests] tag: $out"
+printf '%s\n' "$out" | grep -q '^empty=web (' && ok || bad "empty component reported: $out"
+printf '%s\n' "$out" | grep -q '^unassigned=' && bad "filtered files reported as unassigned: $out" || ok
+sed 's/^## rust$/## rust [not tests]/' plan3.md > plan4.md
+sh "$NAHUYA" shards all --only-tests --plan plan4.md | grep -q '^empty=rust (' && ok || bad "[not tests] tag"
+# a running polish keeps its shards
+sh "$NAHUYA" shards all --only-tests --plan plan3.md --loop >/dev/null
+sh "$NAHUYA" shards all --only-tests >/dev/null 2>&1 && bad "shards replaced under a running polish" || ok
+sh "$NAHUYA" shards all >/dev/null 2>&1 && ok || bad "other run's shards blocked"
+sh "$NAHUYA" status tests all | grep -q '^scope=tests-only' && ok || bad "status tests all: $(sh "$NAHUYA" status tests all 2>&1)"
+sh "$NAHUYA" status --only-tests >/dev/null 2>&1 && ok || bad "status --only-tests"
+sh "$NAHUYA" mark --keep-anchor >/dev/null
+sh "$NAHUYA" shards all --only-tests >/dev/null 2>&1 && ok || bad "shards after the run ended"
+git rm -q -r crate spec lib/fixtures_builder.py; commit unrust
 sh "$NAHUYA" shards all --no-tests --max-lines 850 >/dev/null
 grep -l 'lib/a.py' .git/nahuya/shards/all/*.txt | xargs grep -q 'lib/b.py' && ok || bad "module kept together"
 awk 'BEGIN { for (i = 1; i <= 12; i++) printf "total = total + value_%d * weight\n", i }' > lib/dup1.py
@@ -282,9 +327,15 @@ cd "$R" || exit 1
 # aliases
 T=$WORK/cfg; CLAUDE_CONFIG_DIR=$T sh "$NAHUYA" aliases >/dev/null
 [ -f "$T/skills/nah-polish/SKILL.md" ] && grep -q 'nahuya:polish' "$T/skills/nah-polish/SKILL.md" && ok || bad "alias installed"
+grep -q '^description: "Short for /nahuya:polish: ' "$T/skills/nah-polish/SKILL.md" && ok || bad "alias description quoted (it contains a colon)"
 mkdir -p "$T/skills/nah-mine"; echo mine > "$T/skills/nah-mine/SKILL.md"
 CLAUDE_CONFIG_DIR=$T sh "$NAHUYA" aliases remove >/dev/null
 [ ! -d "$T/skills/nah-polish" ] && [ -f "$T/skills/nah-mine/SKILL.md" ] && ok || bad "alias remove touched only ours"
+
+# the review and polish skills share the planning steps word for word
+blk() { sed -n '/^1\. \*\*Map\.\*\*/,/^   Then run the final/p' "$1" | sed '$d'; }
+[ -n "$(blk "$ROOT/skills/review/SKILL.md")" ] && ok || bad "planning block not found"
+eq "shared planning steps" "$(blk "$ROOT/skills/review/SKILL.md")" "$(blk "$ROOT/skills/polish/SKILL.md")"
 
 # session start layer
 eq "layer on" "$(echo '{}' | sh "$ROOT/hooks/session-start.sh" | head -c 8)" "(nahuya)"
