@@ -34,8 +34,6 @@ jobs:
       # First, because it validates the version and refuses to release one whose
       # [Unreleased] section says nothing.
       - name: Cut the changelog
-        env:
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: .github/scripts/cut-changelog.sh "${{ inputs.version }}" "$(date -u +%Y-%m-%d)"
 
       # Claude Code updates a plugin only when this version changes, so it is committed

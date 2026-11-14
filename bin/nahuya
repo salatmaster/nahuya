@@ -121,7 +121,7 @@ cmd_diff() {
     _n=$(nh_write_diff "$BASE" "$NH_TIP" "$_out")
   else
     [ -f "$_rd/session" ] || nh_die "no review loop in progress; start with: nahuya diff --round 1"
-    _prev=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")/tree-$((_round - 1))
+    _prev=$_rd/tree-$((_round - 1))
     [ -f "$_prev" ] || nh_die "round $((_round - 1)) was not started"
     _now=$(nh_snapshot); printf '%s\n' "$_now" > "$_rd/tree-$_round"
     if [ -n "$_full" ]; then
@@ -157,6 +157,23 @@ diff_target() {
   echo "diff=$_out"
   echo "files=$_n"
   echo "lines=$(wc -l < "$_out" | tr -d ' ')"
+}
+
+# The selection flags shards, inventory and clones share. Returns 1 for anything else.
+sel_flag() {
+  case $1 in
+    --no-tests) _notests=1 ;;
+    --tests|--prune-tests) _notests= ;;
+    --only-tests) export NH_ONLY_TESTS=1 ;;
+    --with-nonprod) _nonprod=1 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Over-engineering signal counts per selected file ("path:N").
+signal_counts() {
+  (cd "$NH_TOP" && printf '%s\n' "$SEL_ALL" | tr '\n' '\000' |
+    xargs -0 git -c core.quotePath=false grep -I -c -E "$NH_SIGNALS" -- 2>/dev/null)
 }
 
 # Files for a whole-repo or folder run, one per line, grouped by directory.
@@ -225,12 +242,8 @@ cmd_shards() {
       --skip) _skip=${2-}; shift 2 || shift ;;
       --fit) _fit=${2-}; shift 2 || shift ;;
       --loop) _loop=1; shift ;;
-      --no-tests) _notests=1; shift ;;
-      --tests) _notests=; shift ;;
       --prune-tests) _notests=; _prune=1; shift ;;
-      --only-tests) export NH_ONLY_TESTS=1; shift ;;
-      --with-nonprod) _nonprod=1; shift ;;
-      *) _path=$1; shift ;;
+      *) sel_flag "$1" || _path=$1; shift ;;
     esac
   done
   require_repo
@@ -250,8 +263,7 @@ cmd_shards() {
     nh_die "a polish run is still using the shards in $_dir. Finish it first (nahuya mark --keep-anchor), or add --loop to start a new run."
   fi
   mkdir -p "$_dir"; rm -f "$_dir"/shard-*.txt
-  _signals=$(cd "$NH_TOP" && printf '%s\n' "$SEL_ALL" | tr '\n' '\000' |
-    xargs -0 git -c core.quotePath=false grep -I -c -E "$NH_SIGNALS" -- 2>/dev/null)
+  _signals=$(signal_counts)
   _skipped=$(printf '%s\n' "$SEL_SKIPPED" | grep . | count_lines | awk -F'\t' -v re="$NH_NONPROD_RE" '
     { p = $2; if (match(p, re)) { k = substr(p, 1, RSTART + RLENGTH - 1); sub(/^\//, "", k); s[k] += $1 } }
     END { for (k in s) printf "%s %d\n", k, s[k] }' | sort -k2,2nr | head -8)
@@ -380,7 +392,6 @@ cmd_shards() {
   [ -z "$_skipped" ] || printf '%s\n' "$_skipped" | awk '{ printf "skipped_nonprod=%s (%d lines; pass --with-nonprod to include)\n", $1, $2 }'
   if [ -n "$_loop" ]; then
     nh_resolve_tip HEAD || nh_die "no commits yet"
-    _rd=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")
     rm -rf "$_rd"; mkdir -p "$_rd"
     printf '%s\n%s\n%s\n%s\n%s\n' "$NH_TIP" "$NH_TIP" "$NH_BRANCH" \
       "$(shard_entries "$_dir"/shard-*.txt | awk -F'\t' '{ s += $2 } END { print s + 0 }')" "$_dir" > "$_rd/session"
@@ -399,20 +410,14 @@ cmd_inventory() {
   while [ $# -gt 0 ]; do
     case $1 in
       --files) _expand="$_expand${2-}$NH_NL"; shift 2 || shift ;;
-      --no-tests) _notests=1; shift ;;
-      --tests) _notests=; shift ;;
-      --prune-tests) _notests=; _prune=1; shift ;;
-      --only-tests) export NH_ONLY_TESTS=1; shift ;;
-      --with-nonprod) _nonprod=1; shift ;;
       --top|--skip|--fit|--max-lines|--plan) shift 2 || shift ;;
       --loop) shift ;;
-      *) _path=$1; shift ;;
+      *) sel_flag "$1" || _path=$1; shift ;;
     esac
   done
   require_repo
   select_files "$_path" "$_notests" "$_nonprod"
-  _signals=$(cd "$NH_TOP" && printf '%s\n' "$SEL_ALL" | tr '\n' '\000' |
-    xargs -0 git -c core.quotePath=false grep -I -c -E "$NH_SIGNALS" -- 2>/dev/null)
+  _signals=$(signal_counts)
   _manifests=$(git -c core.quotePath=false ls-files --full-name -- "$NH_TOP" 2>/dev/null | grep -E "$NH_MANIFEST_RE")
   _plan=$NH_STATE/shards/$SEL_KEY/plan.md
   _data=$(printf '%s\n' "$SEL_ALL" | while IFS= read -r _f; do [ -n "$_f" ] && nh_is_data "$_f" && printf '%s\n' "$_f"; done)
@@ -469,14 +474,9 @@ cmd_clones() {
   while [ $# -gt 0 ]; do
     case $1 in
       --min-lines) _min=${2-}; shift 2 || shift ;;
-      --no-tests) _notests=1; shift ;;
-      --tests) _notests=; shift ;;
-      --prune-tests) _notests=; _prune=1; shift ;;
-      --only-tests) export NH_ONLY_TESTS=1; shift ;;
-      --with-nonprod) _nonprod=1; shift ;;
       --top|--skip|--fit|--max-lines) shift 2 || shift ;;
       --loop) shift ;;
-      *) _path=$1; shift ;;
+      *) sel_flag "$1" || _path=$1; shift ;;
     esac
   done
   case $_min in ''|*[!0-9]*) nh_die "--min-lines takes a whole number" ;; esac
@@ -570,6 +570,13 @@ cmd_log() {
   echo "logged: $_d $_id"
 }
 
+# The gate counts only commits after HEAD from now on.
+move_anchor() {
+  mkdir -p "$NH_STATE/anchors"
+  printf '%s\n' "$NH_TIP" > "$NH_STATE/anchors/$(nh_branch_key "$NH_BRANCH")"
+  rm -f "$NH_STATE/blocks"
+}
+
 cmd_mark() {
   _keep=; [ "${1-}" = --keep-anchor ] && _keep=1
   require_repo
@@ -582,16 +589,12 @@ cmd_mark() {
     _ledger=$(nh_ledger_path "$_a" "$NH_BRANCH")
     _added=$(sed -n 4p "$_rd/session")  # size when the loop started
   fi
-  if [ -z "$_keep" ]; then
-    mkdir -p "$NH_STATE/anchors"
-    printf '%s\n' "$NH_TIP" > "$NH_STATE/anchors/$_key"
-    rm -f "$NH_STATE/blocks"
-  fi
+  [ -n "$_keep" ] || move_anchor
   if [ -n "$_ledger" ]; then
     _counts=$(nh_ledger_final "$_ledger" | awk -F'\t' '{ c[$1]++ } END { printf "%d\t%d\t%d", c["applied"], c["rejected"], c["needs-context"] }')
     [ -f "$NH_STATE/runs.tsv" ] || printf '# date\tbranch\tanchor\thead\tadded_lines\tapplied\trejected\tneeds_context\n' > "$NH_STATE/runs.tsv"
     printf '%s\t%s\t%.12s\t%.12s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${NH_BRANCH:-detached}" \
-      "$(sed -n 1p "$_rd/session")" "$NH_TIP" "${_added:-0}" "$_counts" >> "$NH_STATE/runs.tsv"
+      "$_a" "$NH_TIP" "${_added:-0}" "$_counts" >> "$NH_STATE/runs.tsv"
   fi
   rm -rf "$_rd"
   if [ -n "$_keep" ]; then echo "nahuya: review recorded; the push gate's anchor is unchanged"
@@ -603,11 +606,8 @@ cmd_mark() {
 cmd_skip() {
   require_repo
   nh_resolve_tip HEAD || nh_die "no commits yet"
-  _key=$(nh_branch_key "$NH_BRANCH")
   _a=$(nh_anchor "$NH_TIP" "$NH_BRANCH" 2>/dev/null) && _n=$(nh_count_added "$_a" "$NH_TIP" "$NH_BRANCH") || _n=0
-  mkdir -p "$NH_STATE/anchors"
-  printf '%s\n' "$NH_TIP" > "$NH_STATE/anchors/$_key"
-  rm -f "$NH_STATE/blocks"
+  move_anchor
   echo "nahuya: skipped review of $_n added lines up to $(nh_short "$NH_TIP"); the gate counts only commits after it"
 }
 
@@ -619,7 +619,7 @@ cmd_config() {
   _o=$IFS; IFS=$NH_NL; set -f; set -- $_args; set +f; IFS=$_o
   _inrepo=; nh_enter_repo && _inrepo=1
   if [ $# -ge 1 ]; then
-    _k=$(nh_key "$1") || nh_die "unknown setting '$1'. Settings: gate threshold max-rounds reviewer-model fix-mode layer shard-lines max-agents depth"
+    _k=$(nh_key "$1") || nh_die "unknown setting '$1'. Settings: $(printf '%s' "$NH_KEYS" | tr _ -)"
     [ -n "$_global" ] || [ -n "$_inrepo" ] || nh_die "not inside a git repository; add --global"
     _gk=nahuya.$(printf '%s' "$_k" | tr _ -)
     if [ $# -ge 2 ]; then

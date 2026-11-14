@@ -48,35 +48,7 @@ body=$(awk '/^## \[Unreleased\]/ { inside = 1; next } inside && /^## / { exit } 
 # this works on a shallow clone and cannot disagree with what the file already says.
 link=$(grep -E '^\[unreleased\]: .+/compare/v.+\.\.\.HEAD$' "$file" || true)
 
-if [ -z "$link" ]; then
-    # First release: there is no earlier tag to compare against, so the link block does
-    # not exist yet. Build it from the remote, and point the version at its tag rather
-    # than at a comparison with a version that never existed.
-    repo=${REPO_URL:-$(git config --get remote.origin.url 2>/dev/null || true)}
-    [ -n "$repo" ] ||
-        fail "No '[unreleased]' link in $file and no git remote to derive one; set REPO_URL."
-    repo=$(printf '%s' "$repo" | sed -E 's#^git@github\.com:#https://github.com/#; s#\.git$##')
-
-    printf '\n[unreleased]: %s/compare/v%s...HEAD\n[%s]: %s/releases/tag/v%s\n' \
-        "$repo" "$version" "$version" "$repo" "$version" >>"$file"
-
-    tmp=$(mktemp)
-    trap 'rm -f "$tmp"' EXIT
-    awk -v version="$version" -v date="$date" '
-        /^## \[Unreleased\]/ && !cut {
-            print
-            print ""
-            print "## [" version "] - " date
-            cut = 1
-            next
-        }
-        { print }
-    ' "$file" >"$tmp"
-    cat "$tmp" >"$file"
-    echo "Cut $version ($date) in $file as the first release."
-    exit 0
-fi
-
+[ -n "$link" ] || fail "No '[unreleased]: .../compare/vX...HEAD' link in $file."
 base=$(printf '%s' "$link" | sed -E 's#^\[unreleased\]: (.+/compare/)v.+\.\.\.HEAD$#\1#')
 previous=$(printf '%s' "$link" | sed -E 's#^\[unreleased\]: .+/compare/v(.+)\.\.\.HEAD$#\1#')
 

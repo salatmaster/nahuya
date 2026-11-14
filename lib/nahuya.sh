@@ -203,7 +203,6 @@ nh_anchor() {
     fi
   fi
   _a=$(nh_fallback_base "$1" "$2") || return 1
-  [ -n "$_a" ] || return 1
   mkdir -p "$NH_STATE/anchors" && printf '%s\n' "$_a" > "$_f"
   echo "$_a"
 }
@@ -309,11 +308,7 @@ nh_rust_tests() {
     git -c core.quotePath=false grep -l -I -E '#\[(cfg\((all\()?test[,)]|test\])' -- '*.rs' 2>/dev/null |
       while IFS= read -r _f; do printf '\001FILE %s\n' "$_f"; cat "$_f"; printf '\n'; done |
       NH_RS=$_rs LC_ALL=C awk '
-        function endfile() {
-          if (file == "") return
-          if (item) cnt[file] += ln - start + 1
-          item = 0
-        }
+        function endfile() { if (item) enditem() }
         function enditem() { cnt[file] += ln - start + 1; item = 0 }
         # Scan one line of an open test item: track strings, comments and brackets.
         function scan(s,   i, n, c, rest) {
@@ -499,38 +494,35 @@ nh_keep() {
 # Added lines of our own code between $1 and $2 (branch $3): no tests, docs, data,
 # generated or vendored files, and no commits that came from someone else.
 nh_count_added() {
-  _ns=$(nh_tmp)
   _s=$(nh_review_base "$1" "$2" "$3")
   _th=$(nh_theirs "$_s" "$2" "$3")
   if [ -z "$_th" ] && ! nh_has_merges "$_s" "$2"; then
-    git -c core.quotePath=false diff --numstat --no-renames "$_s" "$2" > "$_ns" 2>/dev/null
+    git -c core.quotePath=false diff --numstat --no-renames "$_s" "$2" 2>/dev/null
   else
     # Sum per commit over our own commits, leaving out merges.
     _ours=$(git rev-list --no-merges "$_s..$2" 2>/dev/null | NH_TH=$_th awk '
       BEGIN { n = split(ENVIRON["NH_TH"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
       !($0 in skip)')
-    : > "$_ns"
     [ -z "$_ours" ] || printf '%s\n' "$_ours" |
-      git -c core.quotePath=false log --no-walk=unsorted --stdin --numstat --no-renames --format= > "$_ns" 2>/dev/null
-  fi
-  _kept=$(awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' "$_ns" | sort -u | nh_keep count)
-  NH_KEPT=$_kept awk -F'\t' '
+      git -c core.quotePath=false log --no-walk=unsorted --stdin --numstat --no-renames --format= 2>/dev/null
+  fi | nh_sum_kept
+}
+
+# stdin: numstat. Sums the added lines of the files the gate counts.
+nh_sum_kept() {
+  _ns=$(cat)
+  _kept=$(printf '%s\n' "$_ns" | awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' | sort -u | nh_keep count)
+  printf '%s\n' "$_ns" | NH_KEPT=$_kept awk -F'\t' '
     BEGIN { n = split(ENVIRON["NH_KEPT"], k, "\n"); for (i = 1; i <= n; i++) ok[k[i]] = 1 }
     NF >= 3 && $1 != "-" && ($3 in ok) { s += $1 }
-    END { print s + 0 }' "$_ns"
-  rm -f "$_ns"
+    END { print s + 0 }'
 }
 
 # Added lines of our own code in uncommitted work (tracked and untracked,
 # minus ignored), compared with HEAD.
 nh_count_uncommitted() {
   _tree=$(nh_snapshot) || { echo 0; return; }
-  _ns=$(git -c core.quotePath=false diff --numstat --no-renames HEAD "$_tree" 2>/dev/null)
-  _kept=$(printf '%s\n' "$_ns" | awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' | nh_keep count)
-  printf '%s\n' "$_ns" | NH_KEPT=$_kept awk -F'\t' '
-    BEGIN { n = split(ENVIRON["NH_KEPT"], k, "\n"); for (i = 1; i <= n; i++) ok[k[i]] = 1 }
-    NF >= 3 && $1 != "-" && ($3 in ok) { s += $1 }
-    END { print s + 0 }'
+  git -c core.quotePath=false diff --numstat --no-renames HEAD "$_tree" 2>/dev/null | nh_sum_kept
 }
 
 # ---------------------------------------------------------------- diffs

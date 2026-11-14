@@ -60,7 +60,7 @@ These rules came out of the plugin's design. Follow them unless the maintainer s
   - a cheap model for mechanics, Opus or Fable for reviewer quality.
 - **A new setting must be added in all of these places:**
   - `nh_default`, `nh_norm` and `NH_KEYS` in `lib/nahuya.sh`;
-  - `valid_values` and the `nahuya config` error message in `bin/nahuya` (the CLI stays for per-repo git config and for debugging; there is no slash command for settings, users change them in `/plugin configure`);
+  - `valid_values` in `bin/nahuya` (the CLI stays for per-repo git config and for debugging; there is no slash command for settings, users change them in `/plugin configure`);
   - `userConfig` in `.claude-plugin/plugin.json`;
   - nothing in skills: `nahuya` reads plugin settings straight from `pluginConfigs` in `settings.json`, because `${user_config.*}` is not substituted in skill bodies;
   - the settings tables in both READMEs;

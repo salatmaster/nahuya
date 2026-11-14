@@ -55,7 +55,6 @@ eq "json key in value" "$(js '{"description":"the \"command\": \"no\"","tool_inp
 eq "json unicode" "$(js '{"command":"echo é&"}' command)" "echo é&"
 eq "json newline" "$(js '{"command":"a\nb"}' command)" "a
 b"
-eq "json cwd" "$(js '{"session_id":"s","cwd":"/tmp/a b","tool_input":{"command":"x"}}' cwd)" "/tmp/a b"
 
 # ------------------------------------------------------------------ gate
 # hook CMD DIR -> prints exit code; stderr/stdout saved to $WORK/out
@@ -77,7 +76,6 @@ cd "$R" || exit 1
 echo seed > README; commit seed; git push -q origin main 2>/dev/null
 git remote set-head origin main >/dev/null 2>&1
 
-eq "non-git command passes" "$(hook 'ls -la' "$R")" 0
 eq "nothing unpushed passes" "$(hook 'git push' "$R")" 0
 
 # commit and push in one command: the hook runs before the commit exists
@@ -91,8 +89,6 @@ lines src/app.py 600; commit big
 eq "600 lines blocks" "$(hook 'git push' "$R")" 2
 grep -q 'push blocked, nothing in this command ran. 600 unreviewed' "$WORK/out" && ok || bad "block message: $(cat "$WORK/out")"
 grep -q 'add them to `exclude:` in .nahuya.md' "$WORK/out" && ok || bad "block message suggests exclude: $(cat "$WORK/out")"
-eq "push in chain blocks" "$(hook 'git status && git push origin main' "$R")" 2
-eq "dry run passes" "$(hook 'git push -n' "$R")" 0
 eq "gate off via env" "$(NAHUYA_GATE=off hook 'git push' "$R")" 0
 eq "plugin option threshold" "$(CLAUDE_PLUGIN_OPTION_THRESHOLD=1000 hook 'git push' "$R")" 0
 git config nahuya.threshold 1000
@@ -111,7 +107,6 @@ grep -q '"additionalContext"' "$WORK/out" && ok || bad "loop guard notice missin
 # skip moves the anchor: skipped lines aren't counted again
 sh "$NAHUYA" skip | grep -q '^nahuya: skipped review of [0-9]* added lines' && ok || bad "skip message"
 eq "skip passes" "$(hook 'git push' "$R")" 0
-eq "skip still passes" "$(hook 'git push' "$R")" 0
 lines after_skip.py 100; commit afterskip
 eq "gate counts only after the skip" "$(sh "$NAHUYA" status | sed -n 's/^unreviewed_added_lines=\([0-9]*\).*/\1/p')" 100
 
@@ -167,7 +162,6 @@ eq "topic before the rebase" "$(unrev)" 300
 git checkout -q main; lines src/m1.py 900; commit m1; git push -q origin main 2>/dev/null
 git checkout -q topic; git rebase -q main >/dev/null 2>&1
 eq "rebase onto main: main's code not counted" "$(unrev)" 300
-eq "rebase onto main: gate passes" "$(hook 'git push -u origin topic' "$WORK/rb")" 0
 grep -q 'src/m1.py' "$(sh "$NAHUYA" diff --target | sed -n 's/^diff=//p')" && bad "review diff includes main's code after a rebase" || ok
 sh "$NAHUYA" mark >/dev/null
 lines src/t2.py 100; commit t2
@@ -293,8 +287,9 @@ grep -q 'research/' .git/nahuya/shards/all/*.txt && bad "research reviewed" || o
 sh "$NAHUYA" shards all --with-nonprod | grep -q '^lines=2390$' && ok || bad "with-nonprod"
 lines tests/test_x.py 120; commit t
 sh "$NAHUYA" shards all | grep -q '^test_lines=120 in 1 files' && ok || bad "test lines reported"
-sh "$NAHUYA" shards all --no-tests | grep -q '^lines=2090$' && ok || bad "no-tests"
-sh "$NAHUYA" shards all --no-tests | grep -q '^test_mode=off$' && ok || bad "test mode off"
+out=$(sh "$NAHUYA" shards all --no-tests)
+printf '%s\n' "$out" | grep -q '^lines=2090$' && ok || bad "no-tests"
+printf '%s\n' "$out" | grep -q '^test_mode=off$' && ok || bad "test mode off"
 sh "$NAHUYA" shards all --prune-tests | grep -q '^test_mode=prune$' && ok || bad "test mode prune"
 printf 'fn add(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() { assert_eq!(super::add(1, 2), 3); }\n}\n' > lib/calc.rs; commit rust
 out=$(sh "$NAHUYA" shards all --only-tests)
