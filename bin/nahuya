@@ -51,9 +51,12 @@ resolve_range() {
 
 cmd_status() {
   # Also takes what the skills pass along: `tests`, --only-tests, `all` or a path.
-  _range=; _target=
+  _range=; _target=; _pv=
   for _a in "$@"; do
+    if [ -n "$_pv" ]; then export NAHUYA_PASSES=$_a; _pv=; continue; fi
     case $_a in
+      --passes) _pv=1 ;;
+      --passes=*) export NAHUYA_PASSES=${_a#--passes=} ;;
       --only-tests) export NH_ONLY_TESTS=1 ;;
       --tests|--no-tests|--prune-tests|--with-nonprod|--loop) ;;  # whole-repo flags the skills may pass along
       tests) if git rev-parse -q --verify "tests^{commit}" >/dev/null 2>&1; then _range=$_a; else export NH_ONLY_TESTS=1; fi ;;
@@ -101,6 +104,8 @@ cmd_diff() {
       --round) _round=${2-}; shift 2 || shift ;;
       --only-tests) export NH_ONLY_TESTS=1; shift ;;
       --full) _full=1; shift ;;
+      --passes) shift 2 || shift ;;
+      --passes=*) shift ;;
       --target) _has_target=1; shift ;;
       tests) if git rev-parse -q --verify "tests^{commit}" >/dev/null 2>&1; then _range=$1; else export NH_ONLY_TESTS=1; fi; shift ;;
       *) if [ -n "$_has_target" ]; then _target=$1; else _range=$1; fi; shift ;;
@@ -242,7 +247,7 @@ count_lines() {
 # shards until everything fits in N. With --loop, also start a polish session.
 NH_SIGNALS='abstract[[:space:]]+class|@abstractmethod|ABC[),:]|Protocol[),:]|interface[[:space:]]+[A-Z]|implements[[:space:]]|Factory|Strategy|Builder|Manager([^A-Za-z0-9_]|$)|Registry|Provider([^A-Za-z0-9_]|$)|Adapter([^A-Za-z0-9_]|$)|Wrapper([^A-Za-z0-9_]|$)|Base[A-Z]|TypeVar|Generic\[|<[A-Z][A-Za-z]*( extends [^>]*)?>|\*\*kwargs|Options([^A-Za-z0-9_]|$)|plugin|register\('
 cmd_shards() {
-  _max=; _loop=; _path=; _top=0; _skip=0; _fit=0; _notests=; _nonprod=; _plan=; _prune=
+  _max=; _loop=; _path=; _top=0; _skip=0; _fit=0; _notests=; _nonprod=; _plan=; _prune=; _round=
   while [ $# -gt 0 ]; do
     case $1 in
       --plan) _plan=${2-}; shift 2 || shift ;;
@@ -251,6 +256,9 @@ cmd_shards() {
       --skip) _skip=${2-}; shift 2 || shift ;;
       --fit) _fit=${2-}; shift 2 || shift ;;
       --loop) _loop=1; shift ;;
+      --round) _round=${2-}; shift 2 || shift ;;
+      --passes) shift 2 || shift ;;
+      --passes=*) shift ;;
       --prune-tests) _notests=; _prune=1; shift ;;
       *) sel_flag "$1" || _path=$1; shift ;;
     esac
@@ -268,7 +276,10 @@ cmd_shards() {
   _dir=$NH_STATE/shards/$SEL_KEY
   # Don't pull the shard files from under a polish run that is still using them.
   _rd=$NH_STATE/rounds/$(nh_branch_key "$(git symbolic-ref -q --short HEAD 2>/dev/null)")
-  if [ -z "$_loop" ] && [ -f "$_rd/session" ] && [ "$(sed -n 5p "$_rd/session")" = "$_dir" ]; then
+  if [ -n "$_round" ]; then
+    case $_round in ''|*[!0-9]*) nh_die "--round takes a whole number" ;; esac
+    [ -f "$_rd/session" ] || nh_die "no polish run in progress; start one with --loop"
+  elif [ -z "$_loop" ] && [ -f "$_rd/session" ] && [ "$(sed -n 5p "$_rd/session")" = "$_dir" ]; then
     nh_die "a polish run is still using the shards in $_dir. Finish it first (nahuya mark --keep-anchor), or add --loop to start a new run."
   fi
   mkdir -p "$_dir"; rm -f "$_dir"/shard-*.txt
@@ -404,6 +415,10 @@ cmd_shards() {
     nh_snapshot > "$_rd/tree-1"
     _l=$(nh_ledger_path "$NH_TIP" "$NH_BRANCH"); ledger_init "$_l"
     echo "ledger=$_l"
+  elif [ -n "$_round" ]; then
+    # A later pass: same run and ledger; the next round's diff starts here.
+    nh_snapshot > "$_rd/tree-$_round"
+    echo "ledger=$(session_ledger)"
   fi
 }
 
@@ -416,7 +431,8 @@ cmd_inventory() {
   while [ $# -gt 0 ]; do
     case $1 in
       --files) _expand="$_expand${2-}$NH_NL"; shift 2 || shift ;;
-      --top|--skip|--fit|--max-lines|--plan) shift 2 || shift ;;
+      --top|--skip|--fit|--max-lines|--plan|--passes) shift 2 || shift ;;
+      --passes=*) shift ;;
       --loop) shift ;;
       *) sel_flag "$1" || _path=$1; shift ;;
     esac
@@ -479,7 +495,8 @@ cmd_clones() {
   while [ $# -gt 0 ]; do
     case $1 in
       --min-lines) _min=${2-}; shift 2 || shift ;;
-      --top|--skip|--fit|--max-lines) shift 2 || shift ;;
+      --top|--skip|--fit|--max-lines|--passes) shift 2 || shift ;;
+      --passes=*) shift ;;
       --loop) shift ;;
       *) sel_flag "$1" || _path=$1; shift ;;
     esac
@@ -646,7 +663,7 @@ cmd_config() {
 valid_values() {
   case $1 in
     gate|layer) echo "Use on or off." ;;
-    threshold|max_rounds|shard_lines|max_agents) echo "Use a whole number of 1 or more." ;;
+    threshold|max_rounds|passes|shard_lines|max_agents) echo "Use a whole number of 1 or more." ;;
     reviewer_model) echo "Use inherit, opus, fable, sonnet or haiku." ;;
     fix_mode) echo "Use commit, amend or uncommitted." ;;
     depth) echo "Use auto, normal or deep." ;;

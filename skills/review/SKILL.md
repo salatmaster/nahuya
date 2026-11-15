@@ -77,7 +77,8 @@ the `depth` setting is `deep`) and the diff path.
        bug, and the last test of a behavior always stay.
    - **Budget:** count the reviewers: one per component and one for the
      duplicates pass in `deep`. A polish run also needs one per later round and
-     a judge for disputes. If that exceeds `max_agents` and the arguments have
+     a judge for disputes, and repeats all of it for each of its `passes`, so
+     multiply the count and `est_tokens` by `passes` there. If that exceeds `max_agents` and the arguments have
      no `--top` or `--skip`, offer:
      - **most suspicious first:** `--top <budget>`, the rest later with
        `--skip`;

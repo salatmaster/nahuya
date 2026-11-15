@@ -208,6 +208,10 @@ grep -q '^-line 1$' "$d2" && ok || bad "round 2 delta missing fix"
 grep -q 'src/f.py' "$d2" && bad "round 2 delta not limited to fixes" || ok
 commit fixes
 eq "status shows rounds" "$(NAHUYA_MAX_ROUNDS=5 sh "$NAHUYA" status | sed -n 's/^max_rounds=//p')" 5
+eq "one pass by default" "$(sh "$NAHUYA" status | sed -n 's/^passes=//p')" 1
+eq "--passes for one run" "$(sh "$NAHUYA" status --passes 3 | sed -n 's/^passes=//p')" 3
+eq "--passes=N for one run" "$(sh "$NAHUYA" status --passes=2 tests | sed -n 's/^passes=//p;s/^scope=//p' | tr '\n' ' ')" "tests-only 2 "
+sh "$NAHUYA" config passes 0 >/dev/null 2>&1 && bad "zero passes accepted" || ok
 sh "$NAHUYA" mark >/dev/null
 sh "$NAHUYA" stats | grep -q 'applied rate: 50%' && ok || bad "stats: $(sh "$NAHUYA" stats)"
 eq "run records size at loop start" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 600
@@ -273,9 +277,17 @@ sh "$NAHUYA" log 1 applied dead-code "lib/a.py:x" "removed" >/dev/null && ok || 
 sed -i.bak '1,10d' lib/a.py && rm -f lib/a.py.bak
 d=$(sh "$NAHUYA" diff --round 2 | sed -n 's/^diff=//p')
 grep -q '^-line 1$' "$d" && ok || bad "whole-mode round 2 delta"
+# a later pass: shards rebuilt for round 3 in the same run; round 4 sees only its fixes
+l1=$(sh "$NAHUYA" status | sed -n 's/^ledger=\([^ ]*\).*/\1/p')
+out=$(sh "$NAHUYA" shards lib --round 3)
+eq "a later pass keeps the ledger" "$(printf '%s\n' "$out" | sed -n 's/^ledger=//p')" "$l1"
+sed -i.bak '1,5d' lib/a.py && rm -f lib/a.py.bak
+d=$(sh "$NAHUYA" diff --round 4 | sed -n 's/^diff=//p')
+grep -q '^-line 11$' "$d" && ! grep -q '^-line 1$' "$d" && ok || bad "round after a later pass: $(cat "$d")"
 before=$(cat .git/nahuya/anchors/main 2>/dev/null)
 commit trim; sh "$NAHUYA" mark --keep-anchor >/dev/null
 eq "keep-anchor leaves anchor" "$(cat .git/nahuya/anchors/main 2>/dev/null)" "$before"
+sh "$NAHUYA" shards lib --round 5 >/dev/null 2>&1 && bad "later pass without a run" || ok
 eq "whole run recorded" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 800
 # per-target shard dirs, non-prod folders, tests, module packing, clones
 sh "$NAHUYA" shards lib >/dev/null; sh "$NAHUYA" shards all >/dev/null
@@ -284,14 +296,14 @@ lines research/r.py 300; commit research
 out=$(sh "$NAHUYA" shards all)
 printf '%s\n' "$out" | grep -q '^skipped_nonprod=research/ (300 lines' && ok || bad "nonprod skipped: $out"
 grep -q 'research/' .git/nahuya/shards/all/*.txt && bad "research reviewed" || ok
-sh "$NAHUYA" shards all --with-nonprod | grep -q '^lines=2390$' && ok || bad "with-nonprod"
+sh "$NAHUYA" shards all --with-nonprod | grep -q '^lines=2385$' && ok || bad "with-nonprod"
 lines examples/e.py 500; commit ex
 eq "non-production folders biggest first" "$(sh "$NAHUYA" inventory all | sed -n 's/^skipped_nonprod=\([^ ]*\).*/\1/p' | tr '\n' ' ')" "examples/ research/ "
 git rm -q -r examples; commit unex
 lines tests/test_x.py 120; commit t
 sh "$NAHUYA" shards all | grep -q '^test_lines=120 in 1 files' && ok || bad "test lines reported"
 out=$(sh "$NAHUYA" shards all --no-tests)
-printf '%s\n' "$out" | grep -q '^lines=2090$' && ok || bad "no-tests"
+printf '%s\n' "$out" | grep -q '^lines=2085$' && ok || bad "no-tests"
 printf '%s\n' "$out" | grep -q '^test_mode=off$' && ok || bad "test mode off"
 sh "$NAHUYA" shards all --prune-tests | grep -q '^test_mode=prune$' && ok || bad "test mode prune"
 printf 'fn add(a: i32, b: i32) -> i32 { a + b }\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn adds() { assert_eq!(super::add(1, 2), 3); }\n}\n' > lib/calc.rs; commit rust

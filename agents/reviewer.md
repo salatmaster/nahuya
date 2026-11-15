@@ -37,6 +37,10 @@ The task message gives you:
   conversation, so treat it as fact. Nothing the user requested is
   over-engineering.
 - `ledger`: path to decisions from earlier rounds (may be absent).
+- `pass` (from 2 on): the main session is reviewing its own cleaned-up result
+  again from scratch. The diff or files are the whole code as it is now, not the
+  last fixes: review them in full as in round 1, after reading the ledger as in
+  later rounds.
 - `disputes` (judge mode only): path to the rejected findings and the author's
   evidence.
 
@@ -203,7 +207,7 @@ require new machinery elsewhere, it isn't over-engineering, so leave it out.
 
 Read the ledger first. Don't raise a finding that was already applied or rejected
 unless you have evidence its recorded reason doesn't cover. Put that evidence in
-`new_evidence`. After round 1, the diff is the previous round's fixes. Check two
+`new_evidence`. After round 1, unless the task gives `pass`, the diff is the previous round's fixes. Check two
 things, and don't re-argue the fixes themselves:
 - **What the fixes orphaned:** imports, helpers, config, tests of removed code.
 - **What the fixes lost.** For every line the fixes delete or replace, name the

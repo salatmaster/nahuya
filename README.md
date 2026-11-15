@@ -126,6 +126,7 @@ Every animation here is a real session with Claude Opus 5.5, recorded in a termi
 - **Checks.** Your test or build command runs after each round, and any fix that breaks it is reverted.
 - **Lost behavior.** Later rounds audit the fixes themselves. For every line a fix deleted, the reviewer names the guard, validation or error path it carried and checks that the new code still has it. Anything lost is restored first.
 - **Stopping.** Later rounds look only at what earlier fixes orphaned or lost. The loop stops after `max-rounds`, or earlier when a round applies nothing.
+- **Passes.** To clean deeper, give it more passes: `/nahuya:polish all --passes 3`, or the `passes` setting. Each pass has fresh reviewers read the whole cleaned-up result again, with its own rounds and the same decision ledger, so nothing already settled is argued again. Every pass runs, and each one costs about as much as the first.
 
 **3. The layer.** This one paragraph is added at session start, and again after `/clear` and compaction:
 
@@ -216,7 +217,7 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 | Command | What it does |
 |---|---|
 | `/nahuya:review [tests] [all\|folder\|base..tip]` | Report-only review. Changes nothing. With no argument it reviews your unpushed changes; `all` reviews the whole codebase. |
-| `/nahuya:polish [tests] [all\|folder\|base..tip]` | Review-and-fix loop. With no argument it covers the commits waiting to be pushed (the gate sends Claude here). With `all` or a folder, it fixes existing code and commits, but never pushes. |
+| `/nahuya:polish [tests] [all\|folder\|base..tip] [--passes N]` | Review-and-fix loop. With no argument it covers the commits waiting to be pushed (the gate sends Claude here). With `all` or a folder, it fixes existing code and commits, but never pushes. |
 | `/nahuya:skip` | Skip review of everything up to the current commit. The gate counts only the commits after it, so the same lines don't block you again. Claude can't invoke this skill and is told not to bypass the gate. |
 | `/nahuya:aliases [install\|remove]` | Add short commands `/nah-review`, `/nah-polish`, `/nah-skip` and `/nah-stats`. They go in `~/.claude/skills`, because plugin commands always carry the `nahuya:` prefix. `remove` deletes only these files. |
 | `nahuya stats` | Applied and rejected findings by category and diff size, from your own history. Run it in a terminal from the plugin's `bin/`, or ask Claude to run it. |
@@ -228,6 +229,7 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 | `gate` | `on` | `on` / `off` |
 | `threshold` | `500` | unreviewed added lines that trigger the loop |
 | `max-rounds` | `3` | review rounds per loop |
+| `passes` | `1` | how many times a polish run reviews the whole result again from scratch; `--passes N` sets it for one run |
 | `reviewer-model` | `inherit` | `inherit` / `opus` / `fable` / `sonnet` / `haiku`: the reviewer subagent's model |
 | `fix-mode` | `commit` | `commit`: new commit · `amend`: only if HEAD isn't pushed · `uncommitted`: leave fixes for you |
 | `layer` | `on` | `on` / `off` |
@@ -386,7 +388,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 169 tests; needs only sh, git and awk
+sh tests/run.sh                     # 176 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

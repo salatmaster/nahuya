@@ -6,6 +6,13 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Passes: `/nahuya:polish --passes N` (or the `passes` setting, 1 by default) runs the whole
+  cleanup N times. Each pass has fresh reviewers read the cleaned-up result again from scratch,
+  with its own rounds and the same decision ledger, so it finds what earlier passes missed without
+  re-arguing what was already decided.
+
 ## [0.6.5] - 2026-11-14
 
 ### Fixed

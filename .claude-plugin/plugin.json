@@ -37,6 +37,14 @@
       "min": 1,
       "max": 10
     },
+    "passes": {
+      "type": "number",
+      "title": "Passes",
+      "description": "How many times a polish run reviews the whole result again from scratch, each pass with its own rounds. More passes clean deeper and cost proportionally more.",
+      "default": 1,
+      "min": 1,
+      "max": 10
+    },
     "reviewer_model": {
       "type": "string",
       "title": "Reviewer model",

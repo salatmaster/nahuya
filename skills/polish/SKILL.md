@@ -1,7 +1,7 @@
 ---
 name: polish
 description: Review-and-fix loop that removes over-engineering and bloat from unpushed commits, or from existing code under a path. Use when the nahuya push gate blocks a push or the user asks to de-bloat a branch or a codebase.
-argument-hint: "[tests] [all | folder | base..tip]  default: commits waiting to be pushed"
+argument-hint: "[tests] [all | folder | base..tip] [--passes N]  default: commits waiting to be pushed"
 allowed-tools: Bash(nahuya *)
 ---
 
@@ -18,6 +18,15 @@ follow **Existing code** at the end instead of Setup and Rounds.
 
 Every reviewer you launch, judges included, gets `model` unless the
 `reviewer_model` setting is `inherit`.
+
+**Passes.** A run makes `passes` passes (the setting, or `--passes N` from the
+arguments for this run only: give it to `nahuya status`, which prints the
+effective `passes=`, and leave it out of every other command). Each pass has
+fresh reviewers read the whole result again from scratch, then audits its own
+fixes in later rounds. Run every pass even when one applies nothing: the user
+chose the depth, and a fresh reviewer often finds what the previous one missed.
+`k` numbers rounds across the whole run, so the ledger and the diffs stay in
+order; it doesn't restart with a pass.
 
 **Tests only.** If the first argument is `tests` (`tests`, `tests all`,
 `tests src/`, `tests main..HEAD`), drop it and run the same flow on test code
@@ -58,17 +67,18 @@ The reviewer's `depth` is the `depth` setting; `auto` means `normal` here.
 
 ## Rounds
 
-For k = 1 … max_rounds:
+For each pass p = 1 … passes, run up to max_rounds rounds, counting k on:
 
-1. Run `nahuya diff --round k` (for round 1, append $ARGUMENTS). It writes this
-   round's diff and prints its path. Add `--full` if the previous round
-   returned 10 findings (20 in `deep`), the reviewer's cap, since it may have
-   left some out.
+1. Run `nahuya diff --round k` (for round 1, append the range or `tests` from
+   the arguments). It writes this round's diff and prints its path. Add
+   `--full` on the first round of a later pass, so its diff is the whole change
+   as it stands now, and also if the previous round returned 10 findings (20
+   in `deep`), the reviewer's cap, since it may have left some out.
 2. Launch a fresh `nahuya:reviewer`. Never resume an earlier one. Give it
    `mode: review`, `round: k`, `depth`, the diff path, the ledger path and
-   `requested`, plus `only_tests` and `tests` in a tests-only run. Don't pass
-   your own reasoning about the code: the reviewer is useful because it hasn't
-   seen it.
+   `requested`, plus `only_tests` and `tests` in a tests-only run, and
+   `pass: p` on the first round of a later pass. Don't pass your own reasoning
+   about the code: the reviewer is useful because it hasn't seen it.
 3. A `lost-behavior` finding means an earlier fix of this run dropped
    something. If it holds, restore the behavior, by reverting that edit if
    needed, before anything else. For every other finding, read the code and
@@ -96,8 +106,9 @@ For k = 1 … max_rounds:
 5. Run the check. A failure that wasn't in the baseline came from this round's
    edits. Revert the edit responsible and log it as rejected with
    `broke check: <what failed>`.
-6. Stop early if this round applied nothing, if an edit would undo an earlier
-   round's edit, or if the remaining findings only re-argue earlier fixes.
+6. End this pass early if this round applied nothing, if an edit would undo an
+   earlier round's edit, or if the remaining findings only re-argue earlier
+   fixes. The next pass still runs.
 
 ## Finish
 
@@ -125,7 +136,8 @@ Report briefly, using these sections:
 - **rejected**: `location — reason`
 - **overturned by judge**: any findings the judge reversed
 - **needs-context**: what needs the user's decision, and what would settle it
-- the number of rounds run, and whether max_rounds cut the loop short
+- per pass: the rounds run and the findings applied, and whether max_rounds
+  cut a pass short
 
 ## Existing code
 
@@ -179,7 +191,8 @@ is `deep` unless the `depth` setting is `normal`.
        bug, and the last test of a behavior always stay.
    - **Budget:** count the reviewers: one per component and one for the
      duplicates pass in `deep`. A polish run also needs one per later round and
-     a judge for disputes. If that exceeds `max_agents` and the arguments have
+     a judge for disputes, and repeats all of it for each of its `passes`, so
+     multiply the count and `est_tokens` by `passes` there. If that exceeds `max_agents` and the arguments have
      no `--top` or `--skip`, offer:
      - **most suspicious first:** `--top <budget>`, the rest later with
        `--skip`;
@@ -193,7 +206,7 @@ is `deep` unless the `depth` setting is `normal`.
 
    Then run the final `nahuya shards` command with the choices and `--loop`;
    that starts the ledger.
-4. **Settings.** Run `nahuya status` with no argument for the settings and check
+4. **Settings.** Run `nahuya status` (with `--passes N` if the arguments have it) for the settings and check
    command, use the ledger path that `shards` printed, and do Setup steps 3–4.
    `requested` is the user's words for this run. Note the current HEAD as the
    run's start.
@@ -212,7 +225,13 @@ is `deep` unless the `depth` setting is `normal`.
    instead of `files`, and handle its findings the same way.
 7. **Later rounds** work as in Rounds, using `nahuya diff --round k`, which
    covers the fixes made so far.
-8. **Finish** as above, with these differences:
+8. **Later passes.** For p = 2 … passes, with k the next round number, run the
+   final `nahuya shards` command again with `--round k` in place of `--loop`.
+   It rebuilds the shards from the code as it is now and keeps the run and its
+   ledger; `--loop` would start a new ledger and forget earlier decisions.
+   Then repeat steps 5–7 with `round: k` and `pass: p` for every reviewer, and
+   log with round `k`.
+9. **Finish** as above, with these differences:
    - `amend` commits like `commit`, for the reason in step 5;
    - run `nahuya mark --keep-anchor` instead of `nahuya mark`;
    - push only if the user asked you to.
