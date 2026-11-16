@@ -6,6 +6,8 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-16
+
 ### Added
 
 - Per-project settings: the front matter of `.nahuya.md` takes any setting, such as `gate: off` for a
@@ -199,7 +201,8 @@ All notable changes to nahuya are documented here. The format follows
 First public release: the push gate, the review-and-fix loop, the report-only reviewer and the
 disclosure layer.
 
-[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.7.2...HEAD
+[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/salatmaster/nahuya/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/salatmaster/nahuya/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/salatmaster/nahuya/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/salatmaster/nahuya/compare/v0.6.5...v0.7.0
