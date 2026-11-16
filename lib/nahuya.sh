@@ -238,25 +238,41 @@ nh_review_base() {
   echo "$1"
 }
 
-# Commits in $1..$2 (branch $3) that aren't our work: off the default branch, the
-# ones it already has (local or remote); on it, pulled commits by other authors.
+# Commits in $1..$2 (branch $3) that aren't new work of this branch:
+# - commits another remote branch already has: the default branch, a fork's
+#   upstream, git-flow's develop, or the branch a stacked one was cut from;
+# - off the default branch, commits the local default branch has;
+# - on the default branch, pushed commits that came in by a merge or that
+#   someone else wrote or committed (a PR merged with GitHub's button, say);
+# - reverts, which bring back code that was already there.
 nh_theirs() {
-  _d=$(nh_default_ref) || return 0
-  if nh_is_trunk "$3"; then
-    _me=$(git var GIT_AUTHOR_IDENT 2>/dev/null | sed -n 's/.*<\(.*\)>.*/\1/p')
-    [ -n "$_me" ] || return 0
-    _own=$(git rev-list --no-merges "$1..$2" --not "$_d" 2>/dev/null)
-    git log --no-merges --format='%H %ae' "$1..$2" 2>/dev/null | NH_OWN=$_own NH_ME=$_me awk '
-      BEGIN { n = split(ENVIRON["NH_OWN"], a, "\n"); for (i = 1; i <= n; i++) own[a[i]] = 1; me = tolower(ENVIRON["NH_ME"]) }
-      !($1 in own) && tolower($2) != me { print $1 }'
-  else
-    _lb=${_d#*/}
-    git show-ref --verify -q "refs/heads/$_lb" && _lb=refs/heads/$_lb || _lb=
-    _own=$(git rev-list --no-merges "$1..$2" --not "$_d" $_lb 2>/dev/null)
-    git rev-list --no-merges "$1..$2" 2>/dev/null | NH_OWN=$_own awk '
-      BEGIN { n = split(ENVIRON["NH_OWN"], a, "\n"); for (i = 1; i <= n; i++) own[a[i]] = 1 }
-      !($0 in own)'
+  _d=$(nh_default_ref) || _d=
+  _trunk=; nh_is_trunk "$3" && _trunk=1
+  # This branch's own remote copies hold its earlier pushes, which still count.
+  _x=
+  if [ -n "$_trunk" ]; then _x="--exclude=$_d"
+  elif [ -n "$3" ]; then _x="--exclude=*/$3"
   fi
+  for _r in upstream push; do
+    [ -n "$3" ] && _u=$(git rev-parse -q --abbrev-ref "$3@{$_r}" 2>/dev/null) && [ -n "$_u" ] && _x="$_x --exclude=$_u"
+  done
+  _lb=
+  if [ -n "$_d" ] && [ -z "$_trunk" ] && git show-ref --verify -q "refs/heads/${_d#*/}"; then _lb=refs/heads/${_d#*/}; fi
+  # shellcheck disable=SC2086
+  _own=$(git rev-list --no-merges "$1..$2" --not $_x --exclude='*/HEAD' --remotes $_lb 2>/dev/null)
+  _rv=$(git rev-list --no-merges -E --grep='^This reverts commit [0-9a-f]{7,}' "$1..$2" 2>/dev/null)
+  _local=; _fp=; _me=
+  if [ -n "$_trunk" ]; then
+    _me=$(git var GIT_AUTHOR_IDENT 2>/dev/null | sed -n 's/.*<\(.*\)>.*/\1/p')
+    _local=$(git rev-list --no-merges "$1..$2" --not --exclude='*/HEAD' --remotes 2>/dev/null)
+    _fp=$(git rev-list --first-parent "$1..$2" 2>/dev/null)
+  fi
+  git log --no-merges --format='%H %ae %ce' "$1..$2" 2>/dev/null |
+    NH_OWN=$_own NH_RV=$_rv NH_LOCAL=$_local NH_FP=$_fp NH_ME=$_me awk '
+      function set(v, arr,   n, a, i) { n = split(ENVIRON[v], a, "\n"); for (i = 1; i <= n; i++) arr[a[i]] = 1 }
+      BEGIN { set("NH_OWN", own); set("NH_RV", rv); set("NH_LOCAL", loc); set("NH_FP", fp); me = tolower(ENVIRON["NH_ME"]) }
+      !($1 in own) || ($1 in rv) { print $1; next }
+      me != "" && !($1 in loc) && (!($1 in fp) || tolower($2) != me || tolower($3) != me) { print $1 }'
 }
 
 # ---------------------------------------------------------------- file filters
@@ -266,8 +282,10 @@ nh_builtin_excluded() {
     *package-lock.json|*npm-shrinkwrap.json|*yarn.lock|*pnpm-lock.yaml|*bun.lock|*bun.lockb|\
     *Cargo.lock|*poetry.lock|*Pipfile.lock|*uv.lock|*pdm.lock|*composer.lock|*Gemfile.lock|\
     *go.sum|*flake.lock|*mix.lock|*pubspec.lock|*Podfile.lock|*packages.lock.json|*gradle.lockfile|\
-    vendor/*|*/vendor/*|node_modules/*|*/node_modules/*|third_party/*|*/third_party/*|\
-    dist/*|*/dist/*|build/*|*/build/*|\
+    vendor/*|*/vendor/*|node_modules/*|*/node_modules/*|third_party/*|*/third_party/*|third-party/*|*/third-party/*|\
+    Pods/*|*/Pods/*|Carthage/*|*/Carthage/*|.yarn/*|*/.yarn/*|.pnp.cjs|*/.pnp.cjs|.pnp.loader.mjs|*/.pnp.loader.mjs|\
+    dist/*|*/dist/*|build/*|*/build/*|__generated__/*|*/__generated__/*|\
+    db/schema.rb|*/db/schema.rb|db/structure.sql|*/db/structure.sql|\
     *.min.js|*.min.css|*.min.mjs|*.js.map|*.css.map|*.snap|\
     *.pb.go|*.pb.cc|*.pb.h|*_pb2.py|*_pb2.pyi|*_pb2_grpc.py|\
     *_generated.*|*.generated.*|*.g.dart|*.freezed.dart|*.designer.cs|*.Designer.cs)
@@ -289,7 +307,8 @@ nh_is_test() {
 # Data and markup. Never test code, even under tests/ or spec/.
 nh_is_data() {
   case $1 in
-    *.json|*.jsonc|*.json5|*.yaml|*.yml|*.xml|*.csv|*.tsv|*.toml|*.ini|*.cfg|*.conf|*.properties|*.txt|*.lock|*.snap|\
+    *.json|*.jsonc|*.json5|*.jsonl|*.ndjson|*.geojson|*.ipynb|*.yaml|*.yml|*.xml|*.csv|*.tsv|*.toml|*.ini|*.cfg|*.conf|*.properties|*.txt|*.lock|*.snap|\
+    *.po|*.pot|*.xlf|*.xliff|*.strings|*.stringsdict|*.resx|*.plist|*.storyboard|*.xib|*.pbxproj|*.csproj|*.sln|\
     *.html|*.htm|*.css|*.scss|*.svg|*.md|*.mdx|*.rst|\
     *.JSON|*.YAML|*.YML|*.XML|*.CSV|*.HTML|*.MD)
       return 0 ;;
@@ -497,42 +516,91 @@ nh_keep() {
 nh_count_added() {
   _s=$(nh_review_base "$1" "$2" "$3")
   _th=$(nh_theirs "$_s" "$2" "$3")
+  # Sum per commit over our own commits, leaving out merges.
+  _ours=$(git rev-list --no-merges "$_s..$2" 2>/dev/null | NH_TH=$_th awk '
+    BEGIN { n = split(ENVIRON["NH_TH"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
+    !($0 in skip)')
+  _pc=0
+  [ -z "$_ours" ] || _pc=$(printf '%s\n' "$_ours" | nh_numstat log --no-walk=unsorted --stdin --format= | nh_sum_kept "$2")
+  # With only our commits, the net diff doesn't count code added and then
+  # removed again, and the per-commit sum catches a file moved in one commit and
+  # reformatted in another. Each overcounts in its own way; take the smaller.
   if [ -z "$_th" ] && ! nh_has_merges "$_s" "$2"; then
-    git -c core.quotePath=false diff --numstat --no-renames "$_s" "$2" 2>/dev/null
-  else
-    # Sum per commit over our own commits, leaving out merges.
-    _ours=$(git rev-list --no-merges "$_s..$2" 2>/dev/null | NH_TH=$_th awk '
-      BEGIN { n = split(ENVIRON["NH_TH"], a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 }
-      !($0 in skip)')
-    [ -z "$_ours" ] || printf '%s\n' "$_ours" |
-      git -c core.quotePath=false log --no-walk=unsorted --stdin --numstat --no-renames --format= 2>/dev/null
-  fi | nh_sum_kept
+    _net=$(nh_numstat diff "$_s" "$2" | nh_sum_kept "$2")
+    [ "$_net" -lt "$_pc" ] && _pc=$_net
+  fi
+  echo "$_pc"
 }
 
-# stdin: numstat. Sums the added lines of the files the gate counts.
+# What the gate counts as added: a moved file counts only its edits and a
+# whitespace-only change (reindenting, reformatting) counts nothing.
+# Renamed paths ("a/{x => y}/f", "old => new") are printed as the new path.
+nh_numstat() {
+  git -c core.quotePath=false "$@" --numstat -M -w 2>/dev/null | awk -F'\t' '
+    NF >= 3 && index($3, " => ") {
+      p = $3
+      if (match(p, /\{[^}]* => [^}]*\}/)) {
+        m = substr(p, RSTART + 1, RLENGTH - 2); sub(/.* => /, "", m)
+        p = substr(p, 1, RSTART - 1) m substr(p, RSTART + RLENGTH)
+        while (sub(/\/\//, "/", p)) ; sub(/^\//, "", p)
+      } else sub(/.* => /, "", p)
+      $3 = p
+    }
+    { print }' OFS='\t'
+}
+
+# stdin: numstat. Sums the added lines of the files the gate counts. $1 = the
+# commit or tree the new side of the numstat came from.
 nh_sum_kept() {
   _ns=$(cat)
-  _kept=$(printf '%s\n' "$_ns" | awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' | sort -u | nh_keep count)
+  _kept=$(printf '%s\n' "$_ns" | awk -F'\t' 'NF >= 3 && $1 != "-" { print $3 }' | sort -u | nh_keep count | nh_drop_generated "$1")
   printf '%s\n' "$_ns" | NH_KEPT=$_kept awk -F'\t' '
     BEGIN { n = split(ENVIRON["NH_KEPT"], k, "\n"); for (i = 1; i <= n; i++) ok[k[i]] = 1 }
     NF >= 3 && $1 != "-" && ($3 in ok) { s += $1 }
     END { print s + 0 }'
 }
 
-# Added lines of our own code in uncommitted work (tracked and untracked,
-# minus ignored), compared with HEAD.
+# stdin: paths. Drops the files at revision $1 whose first lines say they are
+# generated ("Code generated ... DO NOT EDIT", "@generated", "# Generated by
+# Django"), the marker generators write for tools like this one.
+nh_drop_generated() {
+  _ps=$(cat)
+  [ -n "$_ps" ] || return 0
+  [ -n "${1-}" ] || { printf '%s\n' "$_ps"; return 0; }
+  _gen=$(printf '%s\n' "$_ps" | awk -v r="$1" 'NF { print r ":" $0 }' | git cat-file --batch 2>/dev/null |
+    LC_ALL=C awk '
+      left <= 0 { k++; ln = 0; left = ($NF == "missing") ? 0 : $3 + 1; next }
+      {
+        left -= length($0) + 1
+        if (++ln > 5) next
+        l = tolower($0)
+        if (l !~ /^[ \t]*(\/\/|#|\/\*|\*|--|;|%|<!--|"""|\047\047\047)/) next
+        if (l ~ /@generated|do not edit|auto-?generated|automatically generated/ ||
+            l ~ /^[^a-z0-9]*(this file (is|was|has been) )?generated (by|from|with) /) gen[k] = 1
+      }
+      END { for (i in gen) print i }')
+  printf '%s\n' "$_ps" | NH_GEN=$_gen awk '
+    BEGIN { n = split(ENVIRON["NH_GEN"], a, "\n"); for (i = 1; i <= n; i++) gen[a[i]] = 1 }
+    NF { k++; if (!(k in gen)) print }'
+}
+
+# Added lines of our own code in work a command is about to commit, compared
+# with HEAD: tracked and untracked files, or with $1 = tracked only the tracked
+# ones (a commit without `git add` never picks up new files).
 nh_count_uncommitted() {
-  _tree=$(nh_snapshot) || { echo 0; return; }
-  git -c core.quotePath=false diff --numstat --no-renames HEAD "$_tree" 2>/dev/null | nh_sum_kept
+  _tree=$(nh_snapshot "${1-}") || { echo 0; return; }
+  nh_numstat diff HEAD "$_tree" | nh_sum_kept "$_tree"
 }
 
 # ---------------------------------------------------------------- diffs
 
 # Snapshot of the working tree (tracked + untracked, minus ignored) as a tree id.
+# $1 = tracked: tracked files only.
 nh_snapshot() {
   _idx=$(nh_tmp); rm -f "$_idx"
   cp "$(git rev-parse --git-path index)" "$_idx" 2>/dev/null
-  GIT_INDEX_FILE=$_idx git add -A -- ":/" >/dev/null 2>&1
+  if [ "${1-}" = tracked ]; then _add=-u; else _add=-A; fi
+  GIT_INDEX_FILE=$_idx git add $_add -- ":/" >/dev/null 2>&1
   GIT_INDEX_FILE=$_idx git write-tree
   rm -f "$_idx"
 }
@@ -621,8 +689,18 @@ nh_detect_pushes() {
   NH_CMD=$1 NH_ALIASES=" $2 " awk '
     function addtok() { if (intok) { T[++N] = tok; tok = ""; intok = 0 } }
     function sep() { addtok(); if (N > 0 && T[N] != SEP) T[++N] = SEP }
-    function tokenize(s,   i, n, c, q, d) {
-      split("", T); N = 0; tok = ""; intok = 0; q = ""; n = length(s); i = 1
+    # Index just past the line that closes a here-document body starting at i.
+    function skipbody(s, i, n, w, dash,   e, l) {
+      while (i <= n) {
+        e = index(substr(s, i), "\n"); l = e ? substr(s, i, e - 1) : substr(s, i)
+        i = e ? i + e : n + 1
+        if (dash) sub(/^\t+/, "", l)
+        if (l == w) break
+      }
+      return i
+    }
+    function tokenize(s,   i, n, c, q, d, h, w, dash) {
+      split("", T); N = 0; tok = ""; intok = 0; q = ""; n = length(s); i = 1; NHD = 0
       while (i <= n) {
         c = substr(s, i, 1)
         if (q == "\047") { if (c == "\047") q = ""; else tok = tok c; i++; continue }
@@ -637,6 +715,16 @@ nh_detect_pushes() {
         if (c == "#" && !intok) { while (i <= n && substr(s, i, 1) != "\n") i++; continue }
         if (c == ">" || c == "<") {
           if (intok && tok ~ /^[0-9]+$/) { tok = ""; intok = 0 } else addtok()
+          # Here-document: remember the delimiter; its body is text, not commands.
+          if (substr(s, i, 2) == "<<" && substr(s, i + 2, 1) != "<") {
+            i += 2; dash = 0
+            if (substr(s, i, 1) == "-") { dash = 1; i++ }
+            while (substr(s, i, 1) == " " || substr(s, i, 1) == "\t") i++
+            w = ""
+            while (i <= n && substr(s, i, 1) !~ /[ \t\n;&|()<>`]/) { if (index("\047\"\\", substr(s, i, 1)) == 0) w = w substr(s, i, 1); i++ }
+            if (w != "") { HD[++NHD] = w; HDASH[NHD] = dash }
+            continue
+          }
           while (i <= n && index("<>&|", substr(s, i, 1))) {
             if (substr(s, i, 1) == "&" && substr(s, i + 1, 1) ~ /[0-9-]/) { i += 2; while (substr(s, i, 1) ~ /[0-9]/) i++; d = 1; break }
             i++
@@ -646,6 +734,7 @@ nh_detect_pushes() {
           while (i <= n && substr(s, i, 1) !~ /[ \t\n;&|()<>`]/) i++
           continue
         }
+        if (c == "\n" && NHD) { sep(); i++; for (h = 1; h <= NHD; h++) i = skipbody(s, i, n, HD[h], HDASH[h]); NHD = 0; continue }
         if (index(";&|()`\n", c)) { sep(); i++; continue }
         if (c == "$" && substr(s, i + 1, 1) == "(") { sep(); i += 2; continue }
         tok = tok c; intok = 1; i++

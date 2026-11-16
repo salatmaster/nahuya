@@ -26,10 +26,14 @@ gate() (
   anchor=$(nh_anchor "$NH_TIP" "$NH_BRANCH") || exit 0
   added=$(nh_count_added "$anchor" "$NH_TIP" "$NH_BRANCH")
   # The hook runs before the command, so in `git commit … && git push` the commit
-  # doesn't exist yet. Count the work that command is about to commit too.
+  # doesn't exist yet. Count the work that command is about to commit too: new
+  # files only if it runs `git add`, since a bare commit never picks them up.
   pending=0
   case $cmd in
-    *commit*) [ "$NH_TIP" = "$(git rev-parse -q --verify HEAD 2>/dev/null)" ] && pending=$(nh_count_uncommitted) ;;
+    *commit*)
+      if [ "$NH_TIP" = "$(git rev-parse -q --verify HEAD 2>/dev/null)" ]; then
+        case $cmd in *" add "*|*" add"|*" stage "*) pending=$(nh_count_uncommitted) ;; *) pending=$(nh_count_uncommitted tracked) ;; esac
+      fi ;;
   esac
   added=$((${added:-0} + ${pending:-0}))
   threshold=$(nh_cfg threshold)
@@ -42,8 +46,10 @@ gate() (
     [ "$sha" = "$NH_TIP" ] && count=${n:-0}
   fi
   if [ "$count" -ge 3 ]; then
+    # Move the anchor too, or every later commit would start three more blocks.
     rm -f "$NH_STATE/blocks"
-    msg="nahuya: letting this push through unreviewed: it was blocked 3 times at $(nh_short "$NH_TIP") without a completed review."
+    mkdir -p "$NH_STATE/anchors" && printf '%s\n' "$NH_TIP" > "$NH_STATE/anchors/$(nh_branch_key "$NH_BRANCH")"
+    msg="nahuya: letting this push through unreviewed: it was blocked 3 times at $(nh_short "$NH_TIP") without a completed review. The gate counts only commits after it from now on."
     printf '{"systemMessage":"%s","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$msg" "$msg"
     exit 0
   fi
