@@ -6,6 +6,8 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-16
+
 ### Fixed
 
 - The push gate no longer blocks for code that isn't new:
@@ -183,7 +185,8 @@ All notable changes to nahuya are documented here. The format follows
 First public release: the push gate, the review-and-fix loop, the report-only reviewer and the
 disclosure layer.
 
-[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.7.1...HEAD
+[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/salatmaster/nahuya/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/salatmaster/nahuya/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/salatmaster/nahuya/compare/v0.6.5...v0.7.0
 [0.6.5]: https://github.com/salatmaster/nahuya/compare/v0.6.4...v0.6.5
