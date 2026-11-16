@@ -289,6 +289,15 @@ commit trim; sh "$NAHUYA" mark --keep-anchor >/dev/null
 eq "keep-anchor leaves anchor" "$(cat .git/nahuya/anchors/main 2>/dev/null)" "$before"
 sh "$NAHUYA" shards lib --round 5 >/dev/null 2>&1 && bad "later pass without a run" || ok
 eq "whole run recorded" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 800
+# a cleanup moves the gate's anchor only when it covered all the code the gate counts
+sh "$NAHUYA" shards lib --loop >/dev/null
+sh "$NAHUYA" mark | grep -q "anchor is unchanged because only lib was reviewed" && ok || bad "folder run keeps the anchor"
+eq "folder run anchor" "$(cat .git/nahuya/anchors/main 2>/dev/null)" "$before"
+sh "$NAHUYA" shards all --max-lines 500 --top 1 --loop >/dev/null
+sh "$NAHUYA" mark | grep -q "because some components were left for a later batch" && ok || bad "partial batch keeps the anchor"
+sh "$NAHUYA" shards all --loop >/dev/null
+sh "$NAHUYA" mark | grep -q 'marked as reviewed' && ok || bad "full cleanup marks"
+eq "full cleanup moves the anchor" "$(cat .git/nahuya/anchors/main 2>/dev/null)" "$(git rev-parse HEAD)"
 # per-target shard dirs, non-prod folders, tests, module packing, clones
 sh "$NAHUYA" shards lib >/dev/null; sh "$NAHUYA" shards all >/dev/null
 [ -d .git/nahuya/shards/lib ] && [ -d .git/nahuya/shards/all ] && ok || bad "per-target shard dirs"

@@ -197,7 +197,7 @@ For the whole codebase or a folder, nahuya plans the run before spending anythin
   - review everything, with a token estimate;
   - narrow to a folder.
 
-Cleanup runs are `deep` by default. Small but real findings count, and behavior-preserving changes can span several files, for example extracting shared code or folding boilerplate. `/nahuya:polish all` commits after each shard and pushes only if you ask. The report says how many lines were reviewed, how many were cut, and what wasn't reviewed.
+Cleanup runs are `deep` by default. Small but real findings count, and behavior-preserving changes can span several files, for example extracting shared code or folding boilerplate. `/nahuya:polish all` commits after each shard and pushes only if you ask. The report says how many lines were reviewed, how many were cut, and what wasn't reviewed. When the run covered all of the code (the whole repo, no batch left for later, nothing skipped in the plan), it counts as the gate's review too, so your next push isn't blocked for the same lines.
 
 ## Why it won't make Claude worse
 
@@ -388,7 +388,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 176 tests; needs only sh, git and awk
+sh tests/run.sh                     # 181 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

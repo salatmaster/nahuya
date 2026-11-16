@@ -405,8 +405,20 @@ cmd_shards() {
         printf "unassigned=%d files, %d lines are in no component; add them to the plan or to a \"## skip\" component\n", un, ul
         for (d in udir) printf "unassigned_dir=%s (%d lines)\n", d, udir[d]
       }
-    }'
+    }' > "$_dir/report"
+  cat "$_dir/report"
   nonprod_summary
+  # Whether this selection covers all the code the gate counts; nahuya mark moves
+  # the gate's anchor after a cleanup only then.
+  _cov=full
+  [ "$SEL_KEY" = all ] || _cov="only ${_path:-.} was reviewed"
+  [ -z "${NH_ONLY_TESTS-}" ] || _cov="only tests were reviewed"
+  [ "${_skip:-0}" = 0 ] || _cov="earlier components were left to another batch"
+  grep -q '^remaining=' "$_dir/report" && _cov="some components were left for a later batch"
+  grep -q '^planned_skip=' "$_dir/report" && _cov="the plan skipped some code"
+  grep -q '^unassigned=' "$_dir/report" && _cov="some code was in no component"
+  rm -f "$_dir/report"
+  printf '%s\n' "$_cov" > "$_dir/coverage"
   if [ -n "$_loop" ]; then
     nh_resolve_tip HEAD || nh_die "no commits yet"
     rm -rf "$_rd"; mkdir -p "$_rd"
@@ -600,7 +612,7 @@ move_anchor() {
 }
 
 cmd_mark() {
-  _keep=; [ "${1-}" = --keep-anchor ] && _keep=1
+  _keep=; _why=; [ "${1-}" = --keep-anchor ] && _keep=1
   require_repo
   nh_resolve_tip HEAD || nh_die "no commits yet"
   _rd=$NH_STATE/rounds/$(nh_branch_key "$NH_BRANCH")
@@ -609,6 +621,12 @@ cmd_mark() {
     _a=$(sed -n 1p "$_rd/session")
     _ledger=$(nh_ledger_path "$_a" "$NH_BRANCH")
     _added=$(sed -n 4p "$_rd/session")  # size when the loop started
+    # A cleanup counts as the gate's review only if it covered all the code the gate counts.
+    _sd=$(sed -n 5p "$_rd/session")
+    if [ -z "$_keep" ] && [ -n "$_sd" ]; then
+      _why=$(cat "$_sd/coverage" 2>/dev/null)
+      if [ "$_why" = full ]; then _why=; else _keep=1; _why=${_why:-"no coverage was recorded"}; fi
+    fi
   fi
   [ -n "$_keep" ] || move_anchor
   if [ -n "$_ledger" ]; then
@@ -618,7 +636,7 @@ cmd_mark() {
       "$_a" "$NH_TIP" "${_added:-0}" "$_counts" >> "$NH_STATE/runs.tsv"
   fi
   rm -rf "$_rd"
-  if [ -n "$_keep" ]; then echo "nahuya: review recorded; the push gate's anchor is unchanged"
+  if [ -n "$_keep" ]; then echo "nahuya: review recorded; the push gate's anchor is unchanged${_why:+ because $_why}"
   else echo "nahuya: $(nh_short "$NH_TIP") marked as reviewed"; fi
 }
 

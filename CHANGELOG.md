@@ -6,6 +6,13 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A `/nahuya:polish all` run that covered all the code (no batch left for later, nothing skipped in
+  the plan) now counts as the push gate's review, so the next push isn't blocked to review the same
+  lines again. A folder run, a partial batch or a tests-only run still leaves the gate's count
+  alone, and the report says why.
+
 ## [0.7.0] - 2026-11-15
 
 ### Added

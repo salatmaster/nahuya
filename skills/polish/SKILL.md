@@ -233,7 +233,10 @@ is `deep` unless the `depth` setting is `normal`.
    log with round `k`.
 9. **Finish** as above, with these differences:
    - `amend` commits like `commit`, for the reason in step 5;
-   - run `nahuya mark --keep-anchor` instead of `nahuya mark`;
+   - `nahuya mark` moves the push gate's anchor only if this run reviewed all
+     the code the gate counts: the whole repo, no batch left, nothing in a
+     `## skip` component. Otherwise it keeps the anchor and says why; put that
+     line in the report, since those lines will still be reviewed before a push;
    - push only if the user asked you to.
 
    Add to the report:
