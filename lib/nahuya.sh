@@ -60,19 +60,29 @@ nh_norm() {
 # Reads a variable by name. Callers only pass names built from validated keys.
 nh_getenv() { eval "printf '%s' \"\${$1-}\""; }
 
-# nh_cfg_src KEY -> "value<TAB>source". Precedence:
-# env NAHUYA_* > git config nahuya.* (repo, then global) > plugin userConfig > default.
-# Invalid values at one level fall through to the next.
+# nh_cfg_src KEY -> "value<TAB>source". Precedence: env NAHUYA_* > git config
+# nahuya.* for the repo > .nahuya.md front matter > global git config > plugin
+# userConfig > default. The project file beats a personal global default, and a
+# personal repo setting beats the project file. Invalid values fall through.
 nh_cfg_src() {
   _K=$(printf '%s' "$1" | tr 'a-z' 'A-Z')
   _v=$(nh_getenv "NAHUYA_$_K")
   if [ -n "$_v" ] && _n=$(nh_norm "$1" "$_v"); then printf '%s\tenv NAHUYA_%s\n' "$_n" "$_K"; return; fi
-  _gk=nahuya.$(printf '%s' "$1" | tr _ -)
+  _dk=$(printf '%s' "$1" | tr _ -)
+  _gk=nahuya.$_dk
+  _gv=
   _v=$(git config --get "$_gk" 2>/dev/null)
   if [ -n "$_v" ] && _n=$(nh_norm "$1" "$_v"); then
     _scope=$(git config --show-scope --get "$_gk" 2>/dev/null | cut -f1)
-    printf '%s\tgit config (%s)\n' "$_n" "${_scope:-git}"; return
+    _gv=$(printf '%s\tgit config (%s)' "$_n" "${_scope:-git}")
+    case $_scope in global|system) ;; *) printf '%s\n' "$_gv"; return ;; esac
   fi
+  if [ -n "${NH_TOP-}" ]; then
+    _v=$(nh_md_scalar "$1"); [ -n "$_v" ] || _v=$(nh_md_scalar "$_dk")
+    _v=$(printf '%s' "$_v" | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//; s/^"\(.*\)"$/\1/; s/^'"'"'\(.*\)'"'"'$/\1/')
+    if [ -n "$_v" ] && _n=$(nh_norm "$1" "$_v"); then printf '%s\t.nahuya.md\n' "$_n"; return; fi
+  fi
+  if [ -n "$_gv" ]; then printf '%s\n' "$_gv"; return; fi
   _v=$(nh_getenv "CLAUDE_PLUGIN_OPTION_$_K")
   [ -n "$_v" ] || _v=$(nh_plugin_option "$1")
   if [ -n "$_v" ] && _n=$(nh_norm "$1" "$_v"); then printf '%s\tplugin config\n' "$_n"; return; fi

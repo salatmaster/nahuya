@@ -110,7 +110,19 @@ git config nahuya.threshold 1000
 eq "git config threshold" "$(hook 'git push' "$R")" 0
 eq "env beats git config" "$(NAHUYA_THRESHOLD=100 hook 'git push' "$R")" 2
 git config --unset nahuya.threshold
-rm -f .git/nahuya/blocks
+# per-project settings in .nahuya.md: above the global git config, below the repo's
+printf -- '---\ngate: off   # prototypes, not reviewed\n---\nnotes\n' > .nahuya.md
+eq ".nahuya.md turns the gate off" "$(hook 'git push' "$R")" 0
+sh "$NAHUYA" config | grep -q '^  gate  *off  *(.nahuya.md)' && ok || bad ".nahuya.md source: $(sh "$NAHUYA" config)"
+printf -- '---\nthreshold: "1000"\n---\n' > .nahuya.md
+git config --global nahuya.threshold 100
+eq ".nahuya.md beats the global git config" "$(hook 'git push' "$R")" 0
+git config nahuya.threshold 100
+eq "the repo's git config beats .nahuya.md" "$(hook 'git push' "$R")" 2
+git config --unset nahuya.threshold; git config --global --unset nahuya.threshold
+printf -- '---\nmax-rounds: 5\n---\n' > .nahuya.md
+eq ".nahuya.md takes dashed keys" "$(sh "$NAHUYA" status | sed -n 's/^max_rounds=//p')" 5
+rm -f .nahuya.md .git/nahuya/blocks
 eq "invalid env falls through" "$(NAHUYA_THRESHOLD=abc hook 'git push' "$R")" 2
 
 # loop guard: 3 blocks of the same commit, then a pass with a notice

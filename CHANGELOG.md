@@ -6,6 +6,13 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Per-project settings: the front matter of `.nahuya.md` takes any setting, such as `gate: off` for a
+  repo of prototypes or a higher `threshold`. It is committed, so it applies to everyone on the
+  project. It overrides the global git config and the plugin settings; `git config nahuya.*` for the
+  repo and `NAHUYA_*` variables still override it. `nahuya config` shows when a value comes from it.
+
 ### Fixed
 
 - The push gate again catches a push that runs from inside an unquoted here-document (`$(git push)`

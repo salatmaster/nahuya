@@ -249,17 +249,20 @@ To see every effective value and where it came from, ask Claude to run `nahuya c
 
 nahuya reads each setting from these sources, in this order:
 1. environment variables `NAHUYA_<SETTING>` (for example, `NAHUYA_GATE=0` in CI);
-2. `git config nahuya.*` for the repo, then the global git config;
-3. the plugin's own settings (`/plugin configure`);
-4. the defaults above.
+2. `git config nahuya.*` for the repo;
+3. the front matter of `.nahuya.md`, which is committed and applies to everyone working on the project (see below);
+4. the global git config;
+5. the plugin's own settings (`/plugin configure`);
+6. the defaults above.
 
 ### Project notes: `.nahuya.md`
 
-This file is optional and goes at the repo root. Only the reviewer reads it, so it adds nothing to your sessions' context. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file itself.
+This file is optional and goes at the repo root. Only nahuya's scripts and the reviewer read it, so it adds nothing to your sessions' context. Its front matter takes any setting from the table, for the whole project: `gate: off` for a repo of prototypes, say, or a higher `threshold`. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file itself.
 
 ```markdown
 ---
 check: npm test            # runs after every round; fixes that break it are reverted
+threshold: 1000            # any setting from the table, for everyone on this project
 exclude:                   # left out of the line count and the review
   - src/generated/
   - "**/*.pb.ts"
@@ -388,7 +391,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 196 tests; needs only sh, git and awk
+sh tests/run.sh                     # 201 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

@@ -675,7 +675,7 @@ cmd_config() {
     _vs=$(nh_cfg_src "$_k")
     printf '  %-15s %-9s %s\n' "$(printf '%s' "$_k" | tr _ -)" "${_vs%%"$NH_TAB"*}" "(${_vs#*"$NH_TAB"})"
   done
-  echo "Change: /plugin configure. Per repo: git config nahuya.KEY VALUE (--global for all repos, --unset to reset)."
+  echo "Change: /plugin configure. Per project: KEY: VALUE in the front matter of .nahuya.md. Per repo: git config nahuya.KEY VALUE (--global for all repos, --unset to reset)."
 }
 
 valid_values() {
