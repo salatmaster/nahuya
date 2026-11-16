@@ -6,6 +6,8 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-16
+
 ### Changed
 
 - A `/nahuya:polish all` run that covered all the code (no batch left for later, nothing skipped in
@@ -161,7 +163,8 @@ All notable changes to nahuya are documented here. The format follows
 First public release: the push gate, the review-and-fix loop, the report-only reviewer and the
 disclosure layer.
 
-[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.7.0...HEAD
+[unreleased]: https://github.com/salatmaster/nahuya/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/salatmaster/nahuya/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/salatmaster/nahuya/compare/v0.6.5...v0.7.0
 [0.6.5]: https://github.com/salatmaster/nahuya/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/salatmaster/nahuya/compare/v0.6.3...v0.6.4
