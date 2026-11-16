@@ -6,6 +6,12 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The push gate no longer blocks a command that only writes text mentioning `git push`, such as a
+  `cat <<'EOF'` heredoc with a note for another agent. A quoted heredoc body is data now. An unquoted
+  one is still checked, because the shell runs `$(...)` and backticks inside it.
+
 ## [0.7.1] - 2026-11-16
 
 ### Changed
