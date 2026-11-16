@@ -6,6 +6,13 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The push gate again catches a push that runs from inside an unquoted here-document (`$(git push)`
+  or backticks in the body) or that follows a `<<` which isn't one, such as `$((1 << 2))`. 0.7.2
+  skipped those as text. A quoted here-document (`<<'EOF'`) is still only text, so writing a note
+  that mentions `git push` doesn't block. Thanks to @BrainRTP (#1).
+
 ## [0.7.2] - 2026-11-16
 
 ### Fixed

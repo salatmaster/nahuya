@@ -388,7 +388,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 193 tests; needs only sh, git and awk
+sh tests/run.sh                     # 196 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

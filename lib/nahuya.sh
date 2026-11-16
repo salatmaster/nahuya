@@ -689,18 +689,23 @@ nh_detect_pushes() {
   NH_CMD=$1 NH_ALIASES=" $2 " awk '
     function addtok() { if (intok) { T[++N] = tok; tok = ""; intok = 0 } }
     function sep() { addtok(); if (N > 0 && T[N] != SEP) T[++N] = SEP }
-    # Index just past the line that closes a here-document body starting at i.
-    function skipbody(s, i, n, w, dash,   e, l) {
-      while (i <= n) {
-        e = index(substr(s, i), "\n"); l = e ? substr(s, i, e - 1) : substr(s, i)
-        i = e ? i + e : n + 1
-        if (dash) sub(/^\t+/, "", l)
-        if (l == w) break
+    # Heredoc bodies are data. But an unquoted delimiter lets $( and ` in the body run, and
+    # a missing delimiter is more likely a misparse (1 << 2), so those bodies are tokenized.
+    function bodies(s, i, n,   k, b, e, line, done) {
+      for (k = 1; k <= NH; k++) {
+        b = i; done = 0
+        while (i <= n && !done) {
+          e = index(substr(s, i), "\n"); if (!e) e = n - i + 2
+          line = substr(s, i, e - 1); i += e
+          if (HX[k]) sub(/^\t+/, "", line)
+          done = line == HD[k]
+        }
+        if (!done || !HQ[k] && (index(substr(s, b, i - b), "$(") || index(substr(s, b, i - b), "`"))) { i = b; break }
       }
-      return i
+      NH = 0; return i
     }
-    function tokenize(s,   i, n, c, q, d, h, w, dash) {
-      split("", T); N = 0; tok = ""; intok = 0; q = ""; n = length(s); i = 1; NHD = 0
+    function tokenize(s,   i, n, c, q, d, j, op, w) {
+      split("", T); N = 0; NH = 0; tok = ""; intok = 0; q = ""; n = length(s); i = 1
       while (i <= n) {
         c = substr(s, i, 1)
         if (q == "\047") { if (c == "\047") q = ""; else tok = tok c; i++; continue }
@@ -715,26 +720,25 @@ nh_detect_pushes() {
         if (c == "#" && !intok) { while (i <= n && substr(s, i, 1) != "\n") i++; continue }
         if (c == ">" || c == "<") {
           if (intok && tok ~ /^[0-9]+$/) { tok = ""; intok = 0 } else addtok()
-          # Here-document: remember the delimiter; its body is text, not commands.
-          if (substr(s, i, 2) == "<<" && substr(s, i + 2, 1) != "<") {
-            i += 2; dash = 0
-            if (substr(s, i, 1) == "-") { dash = 1; i++ }
-            while (substr(s, i, 1) == " " || substr(s, i, 1) == "\t") i++
-            w = ""
-            while (i <= n && substr(s, i, 1) !~ /[ \t\n;&|()<>`]/) { if (index("\047\"\\", substr(s, i, 1)) == 0) w = w substr(s, i, 1); i++ }
-            if (w != "") { HD[++NHD] = w; HDASH[NHD] = dash }
-            continue
-          }
+          j = i
           while (i <= n && index("<>&|", substr(s, i, 1))) {
             if (substr(s, i, 1) == "&" && substr(s, i + 1, 1) ~ /[0-9-]/) { i += 2; while (substr(s, i, 1) ~ /[0-9]/) i++; d = 1; break }
             i++
           }
           if (d) { d = 0; continue }
+          op = substr(s, j, i - j)
+          if (op == "<<" && substr(s, i, 1) == "-") { op = "<<-"; i++ }
           while (substr(s, i, 1) == " " || substr(s, i, 1) == "\t") i++
+          j = i
           while (i <= n && substr(s, i, 1) !~ /[ \t\n;&|()<>`]/) i++
+          w = substr(s, j, i - j)
+          if (op ~ /^<<-?$/ && w != "") {
+            HX[++NH] = op == "<<-"; HQ[NH] = w ~ /[\047"\\]/
+            gsub(/[\047"\\]/, "", w); HD[NH] = w
+          }
           continue
         }
-        if (c == "\n" && NHD) { sep(); i++; for (h = 1; h <= NHD; h++) i = skipbody(s, i, n, HD[h], HDASH[h]); NHD = 0; continue }
+        if (c == "\n" && NH) { sep(); i = bodies(s, i + 1, n); continue }
         if (index(";&|()`\n", c)) { sep(); i++; continue }
         if (c == "$" && substr(s, i + 1, 1) == "(") { sep(); i += 2; continue }
         tok = tok c; intok = 1; i++

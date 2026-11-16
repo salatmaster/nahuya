@@ -28,13 +28,21 @@ eq "push inside heredoc commit msg" "$(det 'git commit -m "$(cat <<EOF
 mention git push here
 EOF
 )"')" ""
-eq "heredoc body is text" "$(det 'cat > deploy.sh <<'"'EOF'"'
-git push origin main
-EOF')" ""
-eq "push after a heredoc" "$(det 'cat <<-END > x
-	git push nope
-	END
+eq "quoted heredoc body is data" "$(det "cat > /tmp/brief.md <<'EOF'
+One commit \`fix: x\`, then \`git push\`.
+git push
+EOF
+cp /tmp/brief.md /tmp/b2.md")" ""
+eq "<<- heredoc, push after it" "$(det 'cat <<- EOF > f
+	git push origin x
+	EOF
 git push origin feat')" "|feat;"
+eq "unquoted heredoc runs \`git push\`" "$(det "cat <<EOF
+then \`git push\`
+EOF")" "|HEAD;"
+eq "unterminated heredoc is not skipped" "$(det 'echo $((1 << 2))
+git push')" "|HEAD;"
+eq "quoted arg and comment" "$(det "grep -n 'git push' x; echo \"then git push\" # git push")" ""
 eq "-C and refspec" "$(det 'git -C ../other push origin feature:main')" "../other|feature;"
 eq "cd" "$(det 'cd sub && git push')" "sub|HEAD;"
 eq "delete flag" "$(det 'git push --delete origin old')" ""
