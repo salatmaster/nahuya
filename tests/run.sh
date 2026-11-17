@@ -17,6 +17,7 @@ trap '[ -n "$KEEP" ] || rm -rf "$WORK"' EXIT
 export HOME="$WORK/home" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 mkdir -p "$HOME"
 git config --global init.defaultBranch main
+git config --global nahuya.gate on  # off by default; most tests are about the gate
 unset NAHUYA_GATE NAHUYA_THRESHOLD NAHUYA_LAYER NAHUYA_MAX_ROUNDS NAHUYA_FIX_MODE NAHUYA_REVIEWER_MODEL \
   CLAUDE_PLUGIN_OPTION_GATE CLAUDE_PLUGIN_OPTION_THRESHOLD CLAUDE_PLUGIN_OPTION_LAYER
 
@@ -105,6 +106,7 @@ eq "600 lines blocks" "$(hook 'git push' "$R")" 2
 grep -q 'push blocked, nothing in this command ran. 600 unreviewed' "$WORK/out" && ok || bad "block message: $(cat "$WORK/out")"
 grep -q 'add them to `exclude:` in .nahuya.md' "$WORK/out" && ok || bad "block message suggests exclude: $(cat "$WORK/out")"
 eq "gate off via env" "$(NAHUYA_GATE=off hook 'git push' "$R")" 0
+eq "gate off by default" "$(GIT_CONFIG_GLOBAL=/dev/null hook 'git push' "$R")" 0
 eq "plugin option threshold" "$(CLAUDE_PLUGIN_OPTION_THRESHOLD=1000 hook 'git push' "$R")" 0
 git config nahuya.threshold 1000
 eq "git config threshold" "$(hook 'git push' "$R")" 0

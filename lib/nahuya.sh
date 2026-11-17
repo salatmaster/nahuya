@@ -14,7 +14,8 @@ nh_tmp() { mktemp "${TMPDIR:-/tmp}/nahuya.XXXXXX"; }
 
 nh_default() {
   case $1 in
-    gate|layer) echo on ;;
+    gate) echo off ;;
+    layer) echo on ;;
     threshold) echo 500 ;;
     shard_lines) echo 3000 ;;
     max_agents) echo 10 ;;

@@ -8,6 +8,9 @@ All notable changes to nahuya are documented here. The format follows
 
 ### Changed
 
+- The push gate is off by default. Turn it on in `/plugin configure` (**Block big unreviewed
+  pushes**) or for a whole project with `gate: on` in `.nahuya.md`. If you saved the plugin settings
+  with the gate on, it stays on; if you never saved them, it is now off.
 - The plugin's settings dialog is easier to read: the settings you are likely to change come first,
   titles say what each one does, and each description gives the default. Claude Code leaves a number
   blank until you set it, so "Blank means 500" tells you what a blank field does.

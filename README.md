@@ -27,7 +27,7 @@
   <a href="#faq">FAQ</a>
 </p>
 
-**nahuya** is a [Claude Code](https://code.claude.com) plugin that stops AI over-engineering. When Claude is about to push a large change (500+ new lines by default), nahuya runs an AI code review. The review removes abstractions, layers, options and dependencies that nothing needs, and it proves code is unused before cutting it. nahuya adds no rules that limit how the model thinks or writes.
+**nahuya** is a [Claude Code](https://code.claude.com) plugin that stops AI over-engineering. Turn on its push gate, and when Claude is about to push a large change (500+ new lines by default), nahuya runs an AI code review first. The review removes abstractions, layers, options and dependencies that nothing needs, and it proves code is unused before cutting it. nahuya adds no rules that limit how the model thinks or writes.
 
 <p align="center">
   <img src="assets/demo-1-gate.svg" alt="A real Claude Code session: asked to add discount codes and push, Claude runs git commit and git push in one command; the nahuya gate blocks 113 unreviewed lines, Claude runs nahuya:polish, a fresh reviewer finds nothing to cut, and the push goes through." width="100%">
@@ -47,7 +47,7 @@ It never calls code "unused" without a repo-wide search, and it looks where fram
 
 **A review-and-fix loop before big pushes**
 
-It starts on its own, with no CLAUDE.md edits. Claude re-checks every finding and backs each rejection with evidence. A judge settles disputes.
+Once you turn on the push gate, it starts on its own, with no CLAUDE.md edits. Claude re-checks every finding and backs each rejection with evidence. A judge settles disputes.
 
 </td>
 <td width="33%" valign="top">
@@ -71,7 +71,7 @@ In Claude Code:
 /plugin install nahuya@nahuya
 ```
 
-It works right away. nahuya is plain POSIX `sh`, `awk` and `git`, with no Node, Python or jq. It is tested on Linux, macOS and Windows (Git Bash).
+Review and cleanup commands work right away. The push gate is off until you turn it on: open `/plugin configure nahuya@nahuya` and switch on **Block big unreviewed pushes**, or put `gate: on` in a project's [`.nahuya.md`](#project-notes-nahuyamd) to turn it on for everyone working on it. nahuya is plain POSIX `sh`, `awk` and `git`, with no Node, Python or jq. It is tested on Linux, macOS and Windows (Git Bash).
 
 ## See it work
 
@@ -106,7 +106,7 @@ Every animation here is a real session with Claude Opus 5.5, recorded in a termi
   </picture>
 </p>
 
-**1. The gate.** A hook watches the shell commands Claude runs. It blocks a push when the code added since the last review crosses the threshold. The count runs across any number of pushes, so splitting a feature into small pushes doesn't get around it.
+**1. The gate.** It is off until you turn it on (see [Install](#install)). A hook watches the shell commands Claude runs. It blocks a push when the code added since the last review crosses the threshold. The count runs across any number of pushes, so splitting a feature into small pushes doesn't get around it.
 
 <details>
 <summary>What the gate recognizes and counts</summary>
@@ -226,7 +226,7 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 
 | Setting | Default | Options |
 |---|---|---|
-| `gate` | `on` | `on` / `off` |
+| `gate` | `off` | `on` / `off` |
 | `threshold` | `500` | unreviewed added lines that trigger the loop |
 | `max-rounds` | `3` | review rounds per loop |
 | `passes` | `1` | how many times a polish run reviews the whole result again from scratch; `--passes N` sets it for one run |
@@ -257,7 +257,7 @@ nahuya reads each setting from these sources, in this order:
 
 ### Project notes: `.nahuya.md`
 
-This file is optional and goes at the repo root. Only nahuya's scripts and the reviewer read it, so it adds nothing to your sessions' context. Its front matter takes any setting from the table, for the whole project: `gate: off` for a repo of prototypes, say, or a higher `threshold`. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file itself.
+This file is optional and goes at the repo root. Only nahuya's scripts and the reviewer read it, so it adds nothing to your sessions' context. Its front matter takes any setting from the table, for the whole project: `gate: on` to gate pushes for everyone on the project, say, or a higher `threshold`. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file itself.
 
 ```markdown
 ---
@@ -391,7 +391,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 201 tests; needs only sh, git and awk
+sh tests/run.sh                     # 202 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

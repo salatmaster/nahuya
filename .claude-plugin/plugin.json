@@ -19,8 +19,8 @@
     "gate": {
       "type": "boolean",
       "title": "Block big unreviewed pushes",
-      "description": "On: when Claude pushes more unreviewed code than the threshold, it runs the cleanup review first. Default: on.",
-      "default": true
+      "description": "On: when Claude pushes more unreviewed code than the threshold, it runs the cleanup review first. Default: off.",
+      "default": false
     },
     "threshold": {
       "type": "number",
