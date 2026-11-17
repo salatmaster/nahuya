@@ -6,6 +6,12 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The plugin's settings dialog is easier to read: the settings you are likely to change come first,
+  titles say what each one does, and each description gives the default. Claude Code leaves a number
+  blank until you set it, so "Blank means 500" tells you what a blank field does.
+
 ## [0.7.3] - 2026-11-16
 
 ### Added

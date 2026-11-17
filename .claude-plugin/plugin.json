@@ -18,37 +18,27 @@
   "userConfig": {
     "gate": {
       "type": "boolean",
-      "title": "Pre-push gate",
-      "description": "Block a push that carries enough unreviewed code until the nahuya:polish review loop has run.",
+      "title": "Block big unreviewed pushes",
+      "description": "On: when Claude pushes more unreviewed code than the threshold, it runs the cleanup review first. Default: on.",
       "default": true
     },
     "threshold": {
       "type": "number",
-      "title": "Gate threshold (lines)",
-      "description": "Unreviewed added lines of non-test, non-generated code that trigger the review. Counted across pushes since the last review.",
+      "title": "Lines before a review",
+      "description": "Unreviewed added lines that make the gate block, counted across pushes. Tests, docs and generated files don't count. Blank means 500.",
       "default": 500,
       "min": 1
     },
-    "max_rounds": {
-      "type": "number",
-      "title": "Max review rounds",
-      "description": "Upper bound on review-and-fix rounds per loop.",
-      "default": 3,
-      "min": 1,
-      "max": 10
-    },
-    "passes": {
-      "type": "number",
-      "title": "Passes",
-      "description": "How many times a polish run reviews the whole result again from scratch, each pass with its own rounds. More passes clean deeper and cost proportionally more.",
-      "default": 1,
-      "min": 1,
-      "max": 10
+    "layer": {
+      "type": "boolean",
+      "title": "Show what Claude added",
+      "description": "On: Claude ends a reply with 'added: X — why' for anything beyond the task. Costs about 120 tokens per session. Default: on.",
+      "default": true
     },
     "reviewer_model": {
       "type": "string",
       "title": "Reviewer model",
-      "description": "Model for the reviewer subagent. inherit uses the session's model.",
+      "description": "Model of the review subagent. inherit: the same as your session. A cheaper model costs less and misses more. Default: inherit.",
       "options": [
         "inherit",
         "opus",
@@ -60,8 +50,8 @@
     },
     "fix_mode": {
       "type": "string",
-      "title": "How to save fixes",
-      "description": "commit: one new commit on top. amend: fold into HEAD if it isn't pushed yet. uncommitted: leave fixes in the working tree and don't push.",
+      "title": "Where fixes go",
+      "description": "commit: a new commit on top (default). amend: folded into the last commit if it isn't pushed. uncommitted: left in the working tree, no push.",
       "options": [
         "commit",
         "amend",
@@ -69,36 +59,46 @@
       ],
       "default": "commit"
     },
-    "layer": {
-      "type": "boolean",
-      "title": "Persistent layer",
-      "description": "At session start, ask Claude to list unrequested additions as `added: X — why` lines (about 120 tokens).",
-      "default": true
-    },
-    "shard_lines": {
-      "type": "number",
-      "title": "Shard size (lines)",
-      "description": "For whole-repo and folder reviews: about how many lines of code each reviewer subagent gets.",
-      "default": 3000,
-      "min": 200
-    },
-    "max_agents": {
-      "type": "number",
-      "title": "Max reviewer subagents per run",
-      "description": "For whole-repo and folder reviews: if more are needed, Claude asks you how to proceed (most suspicious first, bigger shards, everything, or a narrower folder).",
-      "default": 10,
-      "min": 1
-    },
     "depth": {
       "type": "string",
       "title": "Review depth",
-      "description": "auto: deep for whole-repo and folder cleanups, normal for pre-push reviews. deep reports small real findings too, folds boilerplate and duplicates across files, trims comment bloat and redundant tests.",
+      "description": "auto (default): deep for repo and folder cleanups, normal before a push. deep also reports small findings, duplicates across files and comment bloat.",
       "options": [
         "auto",
         "normal",
         "deep"
       ],
       "default": "auto"
+    },
+    "max_rounds": {
+      "type": "number",
+      "title": "Rounds per review",
+      "description": "Review-and-fix rounds before a review stops; each round after the first checks the fixes. Blank means 3.",
+      "default": 3,
+      "min": 1,
+      "max": 10
+    },
+    "passes": {
+      "type": "number",
+      "title": "Passes per cleanup",
+      "description": "How many times a cleanup reviews its whole result again from scratch. Each pass costs about as much as the first. Blank means 1.",
+      "default": 1,
+      "min": 1,
+      "max": 10
+    },
+    "max_agents": {
+      "type": "number",
+      "title": "Reviewers before asking",
+      "description": "Repo and folder cleanups: if more reviewer subagents are needed, Claude asks you first how to proceed. Blank means 10.",
+      "default": 10,
+      "min": 1
+    },
+    "shard_lines": {
+      "type": "number",
+      "title": "Lines per reviewer",
+      "description": "Repo and folder cleanups: about how many lines of code each reviewer subagent reads. Blank means 3000.",
+      "default": 3000,
+      "min": 200
     }
   }
 }
