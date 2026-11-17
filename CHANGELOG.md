@@ -6,14 +6,33 @@ All notable changes to nahuya are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `/nahuya:config` sets up the settings interactively. Claude shows the current values, asks
+  where the change applies (all your repos, this project for everyone through `.nahuya.md`, or
+  this repo just for you) and what to change, and offers the values to pick from. `nahuya config
+  KEY VALUE --project` writes `.nahuya.md` the same way.
+
 ### Changed
 
 - The push gate is off by default. Turn it on in `/plugin configure` (**Block big unreviewed
   pushes**) or for a whole project with `gate: on` in `.nahuya.md`. If you saved the plugin settings
   with the gate on, it stays on; if you never saved them, it is now off.
-- The plugin's settings dialog is easier to read: the settings you are likely to change come first,
-  titles say what each one does, and each description gives the default. Claude Code leaves a number
-  blank until you set it, so "Blank means 500" tells you what a blank field does.
+- The plugin dialog now has only the two settings most people change: the push gate and the review
+  depth. The rest are in `/nahuya:config`. Values you saved in the dialog before keep working.
+- Whole-repo and folder cleanups no longer split code by line count. Claude sizes the components in
+  its plan, and a target small enough for one reviewer is reviewed whole.
+
+### Removed
+
+- The `layer`, `shard-lines` and `max-agents` settings. The disclosure layer is always on. Claude
+  still asks before a cleanup that needs more than 10 reviewers. `nahuya shards` loses `--max-lines`
+  and `--fit`.
+
+### Fixed
+
+- `--top` and `--skip` in a planned cleanup took components in path order. They now follow the
+  plan's order, where Claude puts the most suspicious components first.
 
 ## [0.7.3] - 2026-11-16
 

@@ -147,15 +147,16 @@ is `deep` unless the `depth` setting is `normal`.
 1. **Map.** Run `nahuya inventory <all|folder>` plus `--tests`, `--no-tests` or
    `--with-nonprod` from the arguments. It shows directories with files, lines,
    tests, over-engineering signals and build manifests, the folders it skipped
-   as non-production, and where to write the plan. If the total fits in
-   `shard-lines`, skip planning: run `nahuya shards <target>` and go to step 3.
+   as non-production, and where to write the plan. If one reviewer can read all
+   of it with full attention (a few thousand lines), skip planning: run
+   `nahuya shards <target>`, which makes it a single shard, and go to step 3.
 2. **Plan logical components.** Skim the README and the entry points (main,
    routes, handlers, jobs, CLI commands) to see the real flows. Then group the
    code by what it does: a feature, a service, a layer, a package. Code that
    does similar jobs belongs together even when it lives in different
-   directories, because that is where duplication hides. Aim for about
-   `shard-lines` per component and at most twice that; look inside big areas
-   with `nahuya inventory <target> --files <dir>` and split them.
+   directories, because that is where duplication hides. Size each component
+   so one reviewer can read all of it with full attention, and split big areas
+   after looking inside them with `nahuya inventory <target> --files <dir>`.
    Put the components most likely to be over-engineered or bloated first. Put
    code you'd leave out (one-off research, examples or generated code the filters
    missed) under a `## skip — <reason>` component.
@@ -192,9 +193,9 @@ is `deep` unless the `depth` setting is `normal`.
    - **Budget:** count the reviewers: one per component and one for the
      duplicates pass in `deep`. A polish run also needs one per later round and
      a judge for disputes, and repeats all of it for each of its `passes`, so
-     multiply the count and `est_tokens` by `passes` there. If that exceeds `max_agents` and the arguments have
+     multiply the count and `est_tokens` by `passes` there. If that is more than 10 reviewers and the arguments have
      no `--top` or `--skip`, offer:
-     - **most suspicious first:** `--top <budget>`, the rest later with
+     - **most suspicious first:** `--top N` for the first N components, the rest later with
        `--skip`;
      - **fewer, bigger components:** merge components in the plan. Above
        roughly 6000 lines each, attention per file drops;

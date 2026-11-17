@@ -19,45 +19,8 @@
     "gate": {
       "type": "boolean",
       "title": "Block big unreviewed pushes",
-      "description": "On: when Claude pushes more unreviewed code than the threshold, it runs the cleanup review first. Default: off.",
+      "description": "On: when Claude pushes more unreviewed code than the threshold (500 lines by default), it runs the cleanup review first. Default: off. Everything else: /nahuya:config.",
       "default": false
-    },
-    "threshold": {
-      "type": "number",
-      "title": "Lines before a review",
-      "description": "Unreviewed added lines that make the gate block, counted across pushes. Tests, docs and generated files don't count. Blank means 500.",
-      "default": 500,
-      "min": 1
-    },
-    "layer": {
-      "type": "boolean",
-      "title": "Show what Claude added",
-      "description": "On: Claude ends a reply with 'added: X — why' for anything beyond the task. Costs about 120 tokens per session. Default: on.",
-      "default": true
-    },
-    "reviewer_model": {
-      "type": "string",
-      "title": "Reviewer model",
-      "description": "Model of the review subagent. inherit: the same as your session. A cheaper model costs less and misses more. Default: inherit.",
-      "options": [
-        "inherit",
-        "opus",
-        "fable",
-        "sonnet",
-        "haiku"
-      ],
-      "default": "inherit"
-    },
-    "fix_mode": {
-      "type": "string",
-      "title": "Where fixes go",
-      "description": "commit: a new commit on top (default). amend: folded into the last commit if it isn't pushed. uncommitted: left in the working tree, no push.",
-      "options": [
-        "commit",
-        "amend",
-        "uncommitted"
-      ],
-      "default": "commit"
     },
     "depth": {
       "type": "string",
@@ -69,36 +32,6 @@
         "deep"
       ],
       "default": "auto"
-    },
-    "max_rounds": {
-      "type": "number",
-      "title": "Rounds per review",
-      "description": "Review-and-fix rounds before a review stops; each round after the first checks the fixes. Blank means 3.",
-      "default": 3,
-      "min": 1,
-      "max": 10
-    },
-    "passes": {
-      "type": "number",
-      "title": "Passes per cleanup",
-      "description": "How many times a cleanup reviews its whole result again from scratch. Each pass costs about as much as the first. Blank means 1.",
-      "default": 1,
-      "min": 1,
-      "max": 10
-    },
-    "max_agents": {
-      "type": "number",
-      "title": "Reviewers before asking",
-      "description": "Repo and folder cleanups: if more reviewer subagents are needed, Claude asks you first how to proceed. Blank means 10.",
-      "default": 10,
-      "min": 1
-    },
-    "shard_lines": {
-      "type": "number",
-      "title": "Lines per reviewer",
-      "description": "Repo and folder cleanups: about how many lines of code each reviewer subagent reads. Blank means 3000.",
-      "default": 3000,
-      "min": 200
     }
   }
 }

@@ -71,7 +71,7 @@ In Claude Code:
 /plugin install nahuya@nahuya
 ```
 
-Review and cleanup commands work right away. The push gate is off until you turn it on: open `/plugin configure nahuya@nahuya` and switch on **Block big unreviewed pushes**, or put `gate: on` in a project's [`.nahuya.md`](#project-notes-nahuyamd) to turn it on for everyone working on it. nahuya is plain POSIX `sh`, `awk` and `git`, with no Node, Python or jq. It is tested on Linux, macOS and Windows (Git Bash).
+Review and cleanup commands work right away. The push gate is off until you turn it on: open `/plugin configure nahuya@nahuya` and switch on **Block big unreviewed pushes**, or put `gate: on` in a project's [`.nahuya.md`](#project-notes-nahuyamd) to turn it on for everyone working on it. Everything else is in `/nahuya:config`. nahuya is plain POSIX `sh`, `awk` and `git`, with no Node, Python or jq. It is tested on Linux, macOS and Windows (Git Bash).
 
 ## See it work
 
@@ -182,7 +182,7 @@ Put `tests` first to work on test code only. It combines with every target: `tes
 
 For the whole codebase or a folder, nahuya plans the run before spending anything:
 
-- **Logical components, not line counts.** `nahuya inventory` builds a cheap map of directories, sizes, tests and build manifests. Claude groups the code by what it does: a feature, a service, a layer. Related code from different folders lands with the same reviewer, which is where duplicates show up. Each component is about 3000 lines (`shard-lines`) and gets its own fresh reviewer. Small targets skip planning. In short, the model plans and shell scripts do the counting.
+- **Logical components, not line counts.** `nahuya inventory` builds a cheap map of directories, sizes, tests and build manifests. Claude groups the code by what it does: a feature, a service, a layer. Related code from different folders lands with the same reviewer, which is where duplicates show up. Claude sizes each component so one reviewer can read all of it with full attention, and each gets its own fresh reviewer. A small target is reviewed whole, without a plan. In short, the model plans and shell scripts do the counting.
 - **Only code that ships.** Docs, generated and vendored files are skipped, and so are folders such as `research/`, `examples/`, `benchmarks/`, `fixtures/` and `playground/`. Claude tells you what it skipped, and `--with-nonprod` brings those folders back in.
 - **Tests are your call.** Claude asks what to do with them:
   - leave them alone;
@@ -191,7 +191,7 @@ For the whole codebase or a folder, nahuya plans the run before spending anythin
 
   A test adds nothing if it passes no matter how the code breaks, or if it only repeats a neighbor. The first kind has no real assertion, checks only what a mock returns, restates the type system, computes the expected value with the code under test, or has been disabled for good. The second kind exercises the same behavior on the same class of input as a test that stays. Each removal needs a mutation-style argument: either no plausible bug would make that test fail, or every bug that fails it also fails the test that stays. Regression tests stay, and so does the only test that catches a money, security or data bug, and the last test of any behavior. A test isn't protected just because it touches money.
 - **A duplicates pass.** A cheap clone detector scans the whole target for near-identical code across files. One more reviewer then reads both sides of each pair. This catches what a per-shard review can't see, such as two modules built on the same skeleton.
-- **A budget.** By default a run uses at most 10 reviewer subagents (`max-agents`). If it needs more, Claude asks first and shows the numbers for each option:
+- **A budget.** If a run needs more than 10 reviewer subagents, Claude asks first and shows the numbers for each option:
   - review the most suspicious components now and the rest as a later batch (`--skip N`);
   - use fewer, bigger components;
   - review everything, with a token estimate;
@@ -218,31 +218,31 @@ nahuya also leaves thinking, prose style and file reading alone. Rules that rati
 |---|---|
 | `/nahuya:review [tests] [all\|folder\|base..tip]` | Report-only review. Changes nothing. With no argument it reviews your unpushed changes; `all` reviews the whole codebase. |
 | `/nahuya:polish [tests] [all\|folder\|base..tip] [--passes N]` | Review-and-fix loop. With no argument it covers the commits waiting to be pushed (the gate sends Claude here). With `all` or a folder, it fixes existing code and commits, but never pushes. |
+| `/nahuya:config` | Change settings: Claude shows the current values, asks where the change applies (all your repos, this project for everyone, or this repo just for you) and what to change, and offers the values to pick from. Claude can't invoke this skill itself. |
 | `/nahuya:skip` | Skip review of everything up to the current commit. The gate counts only the commits after it, so the same lines don't block you again. Claude can't invoke this skill and is told not to bypass the gate. |
 | `/nahuya:aliases [install\|remove]` | Add short commands `/nah-review`, `/nah-polish`, `/nah-skip` and `/nah-stats`. They go in `~/.claude/skills`, because plugin commands always carry the `nahuya:` prefix. `remove` deletes only these files. |
 | `nahuya stats` | Applied and rejected findings by category and diff size, from your own history. Run it in a terminal from the plugin's `bin/`, or ask Claude to run it. |
 
 ## Configuration
 
+The plugin dialog (`/plugin configure nahuya@nahuya`, also shown when you install) has the two settings most people change: **Block big unreviewed pushes** (`gate`) and **Review depth** (`depth`). Everything else is set with `/nahuya:config`.
+
 | Setting | Default | Options |
 |---|---|---|
-| `gate` | `off` | `on` / `off` |
+| `gate` | `off` | `on` / `off`. Also in the plugin dialog |
+| `depth` | `auto` | `auto`: `deep` for whole-repo and folder cleanups, `normal` before pushes · `normal` · `deep`. Also in the plugin dialog |
 | `threshold` | `500` | unreviewed added lines that trigger the loop |
-| `max-rounds` | `3` | review rounds per loop |
-| `passes` | `1` | how many times a polish run reviews the whole result again from scratch; `--passes N` sets it for one run |
 | `reviewer-model` | `inherit` | `inherit` / `opus` / `fable` / `sonnet` / `haiku`: the reviewer subagent's model |
 | `fix-mode` | `commit` | `commit`: new commit · `amend`: only if HEAD isn't pushed · `uncommitted`: leave fixes for you |
-| `layer` | `on` | `on` / `off` |
-| `shard-lines` | `3000` | lines of code per reviewer in whole-repo and folder runs |
-| `max-agents` | `10` | reviewer subagents per whole-repo or folder run before Claude asks you |
-| `depth` | `auto` | `auto`: `deep` for whole-repo and folder cleanups, `normal` before pushes · `normal` · `deep` |
+| `max-rounds` | `3` | review rounds per loop |
+| `passes` | `1` | how many times a polish run reviews the whole result again from scratch; `--passes N` sets it for one run |
 
-Change settings in `/plugin configure`. To override a setting for one repo, use git config in a terminal:
+`/nahuya:config` writes the global git config (all your repos), the front matter of `.nahuya.md` (this project, for everyone) or this repo's git config (just you). You can do the same by hand:
 
 ```
-git config nahuya.threshold 1000                 # this repo
 git config --global nahuya.reviewer-model fable  # every repo
-git config --unset nahuya.threshold              # back to the plugin setting
+git config nahuya.threshold 1000                 # this repo
+git config --unset nahuya.threshold              # back to the default
 ```
 
 To see every effective value and where it came from, ask Claude to run `nahuya config`.
@@ -252,12 +252,12 @@ nahuya reads each setting from these sources, in this order:
 2. `git config nahuya.*` for the repo;
 3. the front matter of `.nahuya.md`, which is committed and applies to everyone working on the project (see below);
 4. the global git config;
-5. the plugin's own settings (`/plugin configure`);
+5. the plugin dialog (`/plugin configure`);
 6. the defaults above.
 
 ### Project notes: `.nahuya.md`
 
-This file is optional and goes at the repo root. Only nahuya's scripts and the reviewer read it, so it adds nothing to your sessions' context. Its front matter takes any setting from the table, for the whole project: `gate: on` to gate pushes for everyone on the project, say, or a higher `threshold`. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file itself.
+This file is optional and goes at the repo root. Only nahuya's scripts and the reviewer read it, so it adds nothing to your sessions' context. Its front matter takes any setting from the table, for the whole project: `gate: on` to gate pushes for everyone on the project, say, or a higher `threshold`. `/nahuya:config` writes settings here when you pick this project. When the gate blocks on code that doesn't ship, such as one-off scripts, Claude stops and suggests an `exclude:` line here instead of reviewing it. Claude doesn't edit this file on its own.
 
 ```markdown
 ---
@@ -383,7 +383,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Limitations
 
 - Changes under the threshold (500 lines by default) are never reviewed automatically. Run `/nahuya:review` on those.
-- A whole-repo run costs roughly one reviewer per 3000 lines, plus verification. The `max-agents` budget keeps that in check.
+- A whole-repo run costs roughly one reviewer per few thousand lines, plus verification. Above 10 reviewers, Claude asks before starting.
 - It doesn't see pushes made outside Claude. It also doesn't see shell aliases such as `gp` that exist only in your interactive shell; git aliases do work.
 - "Lines since the last review" is approximate: a rebase that changes a reviewed commit's patch, and every amend or squash, makes that commit count again.
 - The reviewer can be wrong. That's why every finding is re-verified, rejections need evidence, and anything uncertain comes to you.
@@ -391,7 +391,7 @@ Yes, as long as Git for Windows is installed, because Claude Code uses its Git B
 ## Development
 
 ```
-sh tests/run.sh                     # 202 tests; needs only sh, git and awk
+sh tests/run.sh                     # 201 tests; needs only sh, git and awk
 claude --plugin-dir . -p "..."      # run Claude Code with this checkout loaded
 claude plugin validate .
 ```

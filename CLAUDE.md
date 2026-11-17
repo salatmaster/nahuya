@@ -33,8 +33,8 @@ These rules came out of the plugin's design. Follow them unless the maintainer s
   - It counts cumulative unreviewed lines from the anchor, and leaves out tests, generated and vendored files.
   - It gates only pushes made by Claude, and installs no git hooks in user repos.
   - The gate checks a whole command line, so `nahuya mark` and `git push` must run as separate commands.
-- **Whole-repo runs respect the budget.** If the shards exceed `max_agents`, Claude asks before spending anything: most suspicious first, bigger shards, everything (with a token estimate), or a narrower folder.
-- **The model plans, shell scripts count.** Judgment calls belong to the model: which code forms a logical component, what is non-production, what looks suspicious. Use `nahuya inventory` to give it a map and `shards --plan` to expand and check its plan. Shell code does what must be deterministic and free: counting, diffs, state, push detection, clone hashing. Don't encode judgment in shell heuristics.
+- **Whole-repo runs respect the budget.** If a run needs more than 10 reviewers, Claude asks before spending anything: most suspicious first, bigger components, everything (with a token estimate), or a narrower folder.
+- **The model plans, shell scripts count.** Judgment calls belong to the model: which code forms a logical component, what is non-production, what looks suspicious. That includes how big a component is: shell code never splits by line count. Use `nahuya inventory` to give it a map and `shards --plan` to expand and check its plan. Shell code does what must be deterministic and free: counting, diffs, state, push detection, clone hashing. Don't encode judgment in shell heuristics.
 - **Whole-repo runs are cleanups (`depth` `auto` → `deep`).** Non-production folders are skipped and reported. Tests are included only if the user agrees. A clone-detector pass catches duplicates across shards. A commit follows each shard. Nothing is pushed unless the user asks.
 - **Nothing outside the plugin and the user's repo gets written unasked.** The short `/nah-*` aliases go into `~/.claude/skills` only through `nahuya aliases`, and `remove` deletes only files carrying the alias marker.
 - **Never touch user history.** Loop fixes go in a new commit by default. Pushed history is never rewritten. No plugin branding goes into user commits or code.
@@ -60,9 +60,9 @@ These rules came out of the plugin's design. Follow them unless the maintainer s
   - a cheap model for mechanics, Opus or Fable for reviewer quality.
 - **A new setting must be added in all of these places:**
   - `nh_default`, `nh_norm` and `NH_KEYS` in `lib/nahuya.sh`;
-  - `valid_values` in `bin/nahuya` (the CLI stays for per-repo git config and for debugging; there is no slash command for settings, users change them in `/plugin configure`);
-  - `userConfig` in `.claude-plugin/plugin.json`;
-  - nothing in skills: `nahuya` reads plugin settings straight from `pluginConfigs` in `settings.json`, because `${user_config.*}` is not substituted in skill bodies;
+  - `valid_values` in `bin/nahuya`;
+  - a question in `skills/config/SKILL.md`: users change settings with `/nahuya:config`, which writes git config or `.nahuya.md` through `nahuya config`;
+  - `userConfig` in `.claude-plugin/plugin.json` only if most users need it at install. The dialog holds just `gate` and `depth`, because every field there is a question at install. `nahuya` reads the dialog's values straight from `pluginConfigs` in `settings.json`;
   - the settings tables in both READMEs;
   - a test.
 

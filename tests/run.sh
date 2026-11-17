@@ -18,8 +18,8 @@ export HOME="$WORK/home" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAI
 mkdir -p "$HOME"
 git config --global init.defaultBranch main
 git config --global nahuya.gate on  # off by default; most tests are about the gate
-unset NAHUYA_GATE NAHUYA_THRESHOLD NAHUYA_LAYER NAHUYA_MAX_ROUNDS NAHUYA_FIX_MODE NAHUYA_REVIEWER_MODEL \
-  CLAUDE_PLUGIN_OPTION_GATE CLAUDE_PLUGIN_OPTION_THRESHOLD CLAUDE_PLUGIN_OPTION_LAYER
+unset NAHUYA_GATE NAHUYA_THRESHOLD NAHUYA_MAX_ROUNDS NAHUYA_FIX_MODE NAHUYA_REVIEWER_MODEL \
+  CLAUDE_PLUGIN_OPTION_GATE CLAUDE_PLUGIN_OPTION_THRESHOLD
 
 # ------------------------------------------------------------------ detection
 det() { nh_detect_pushes "$1" "${2-}" | tr '\t\n' '|;'; }
@@ -315,28 +315,33 @@ sh "$NAHUYA" config threshold lots >/dev/null 2>&1 && bad "invalid value accepte
 sh "$NAHUYA" config bogus 1 >/dev/null 2>&1 && bad "unknown key accepted" || ok
 sh "$NAHUYA" config 'model' fable >/dev/null
 eq "model alias" "$(git config nahuya.reviewer-model)" fable
+sh "$NAHUYA" config max-rounds 5 --project >/dev/null
+grep -qx 'max-rounds: 5' "$(git rev-parse --show-toplevel)/.nahuya.md" && ok || bad "config --project writes .nahuya.md"
+eq "...and the setting comes from it" "$(sh "$NAHUYA" config | sed -n 's/^  max-rounds  *\([0-9]*\) *(\(.*\))$/\1 \2/p')" "5 .nahuya.md"
+sh "$NAHUYA" config max-rounds --unset --project >/dev/null
+grep -q max-rounds "$(git rev-parse --show-toplevel)/.nahuya.md" && bad "config --project --unset" || ok
 
 # ------------------------------------------------------------------ whole repo
 cd "$WORK/solo" || exit 1
 lines lib/a.py 400; lines lib/b.py 400; lines web/c.ts 400; printf 'x\n' > NOTES.md; lines vendor/v.js 500
 commit spread
-out=$(sh "$NAHUYA" shards . --max-lines 500)
-eq "shard count" "$(printf '%s\n' "$out" | sed -n 's/^shards_total=//p')" 4
+out=$(sh "$NAHUYA" shards .)
+eq "without a plan, one shard" "$(printf '%s\n' "$out" | sed -n 's/^shards_total=//p')" 1
 eq "shard lines" "$(printf '%s\n' "$out" | sed -n 's/^lines=//p')" 2100
 printf '%s\n' "$out" | grep -q NOTES && bad "docs not skipped" || ok
 grep -q 'vendor/' .git/nahuya/shards/*/*.txt && bad "vendor not skipped" || ok
 grep -q '^lib/a.py (400 lines)$' .git/nahuya/shards/*/shard-*.txt && ok || bad "shard manifest"
-eq "all keyword" "$(cd lib && sh "$NAHUYA" shards all --max-lines 500 | sed -n 's/^lines=//p')" 2100
-out=$(sh "$NAHUYA" shards . --max-lines 500 --top 2)
+eq "all keyword" "$(cd lib && sh "$NAHUYA" shards all | sed -n 's/^lines=//p')" 2100
+printf '## b\nlib/b.py\n## a\nlib/a.py\n## web\nweb/\n## x\nx.py\n' > "$WORK/split.md"
+out=$(sh "$NAHUYA" shards . --plan "$WORK/split.md" --top 2)
+eq "one shard per component" "$(printf '%s\n' "$out" | sed -n 's/^shards_total=//p')" 4
 eq "top limits selection" "$(printf '%s\n' "$out" | sed -n 's/^shards_selected=//p')" 2
+eq "the plan's order is the review order" "$(printf '%s\n' "$out" | head -1 | sed 's/.*component=//')" b
 printf '%s\n' "$out" | grep -q '^remaining=2 (next batch: --skip 2)$' && ok || bad "next batch hint: $out"
-eq "skip takes the rest" "$(sh "$NAHUYA" shards . --max-lines 500 --skip 2 | sed -n 's/^shards_selected=//p')" 2
-eq "fit packs into budget" "$(sh "$NAHUYA" shards . --fit 2 | sed -n 's/^shards_total=//p')" 2
-eq "shard_lines from config" "$(NAHUYA_SHARD_LINES=900 sh "$NAHUYA" shards . | sed -n 's/^shard_lines=//p')" 900
-eq "max_agents from env" "$(NAHUYA_MAX_AGENTS=4 sh "$NAHUYA" shards . | sed -n 's/^max_agents=//p')" 4
+eq "skip takes the rest" "$(sh "$NAHUYA" shards . --plan "$WORK/split.md" --skip 2 | sed -n 's/^shards_selected=//p')" 2
 eq "explicit doc file" "$(sh "$NAHUYA" shards NOTES.md | sed -n 's/^files=//p')" 1
 printf 'class FooFactory:\n    pass\nclass BarManager:\n    pass\n' > lib/zz_factory.py; commit sig
-eq "suspicious shard ranks first" "$(sh "$NAHUYA" shards lib --max-lines 10 | head -1 | sed 's/.*signals=//')" 2
+eq "signals counted per shard" "$(sh "$NAHUYA" shards lib | head -1 | sed 's/.*signals=//')" 2
 git rm -q lib/zz_factory.py; commit unsig
 sh "$NAHUYA" status >/dev/null 2>&1 && ok || bad "status dies without a remote"
 sh "$NAHUYA" shards lib --loop >/dev/null
@@ -360,7 +365,7 @@ eq "whole run recorded" "$(tail -1 .git/nahuya/runs.tsv | cut -f5)" 800
 sh "$NAHUYA" shards lib --loop >/dev/null
 sh "$NAHUYA" mark | grep -q "anchor is unchanged because only lib was reviewed" && ok || bad "folder run keeps the anchor"
 eq "folder run anchor" "$(cat .git/nahuya/anchors/main 2>/dev/null)" "$before"
-sh "$NAHUYA" shards all --max-lines 500 --top 1 --loop >/dev/null
+sh "$NAHUYA" shards all --plan "$WORK/split.md" --top 1 --loop >/dev/null
 sh "$NAHUYA" mark | grep -q "because some components were left for a later batch" && ok || bad "partial batch keeps the anchor"
 sh "$NAHUYA" shards all --loop >/dev/null
 sh "$NAHUYA" mark | grep -q 'marked as reviewed' && ok || bad "full cleanup marks"
@@ -431,8 +436,6 @@ sh "$NAHUYA" status tests all --prune-tests >/dev/null 2>&1 && ok || bad "status
 sh "$NAHUYA" mark --keep-anchor >/dev/null
 sh "$NAHUYA" shards all --only-tests >/dev/null 2>&1 && ok || bad "shards after the run ended"
 git rm -q -r crate spec lib/fixtures_builder.py; commit unrust
-sh "$NAHUYA" shards all --no-tests --max-lines 850 >/dev/null
-grep -l 'lib/a.py' .git/nahuya/shards/all/*.txt | xargs grep -q 'lib/b.py' && ok || bad "module kept together"
 awk 'BEGIN { for (i = 1; i <= 12; i++) printf "total = total + value_%d * weight\n", i }' > lib/dup1.py
 cp lib/dup1.py web/dup2.py; commit dup
 rm -f .git/nahuya/shards/all/shard-*.txt
@@ -460,7 +463,6 @@ printf '%s\n' "$out" | grep -q 'component=core$' && ok || bad "plan component: $
 grep -q 'web/dup2.py' .git/nahuya/shards/all/shard-1.txt && ok || bad "longest match wins"
 printf '%s\n' "$out" | grep -q '^planned_skip=skip: scratch (900 lines' && ok || bad "planned skip"
 printf '%s\n' "$out" | grep -q '^unassigned=' && ok || bad "unassigned reported"
-sh "$NAHUYA" shards all --plan plan.md --fit 2 >/dev/null 2>&1 && bad "fit with plan accepted" || ok
 cd "$R" || exit 1
 
 # aliases
@@ -491,7 +493,6 @@ bash "$RS/release-notes.sh" "$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$ROOT/.
 
 # session start layer
 eq "layer on" "$(echo '{}' | sh "$ROOT/hooks/session-start.sh" | head -c 8)" "(nahuya)"
-eq "layer off" "$(echo '{}' | NAHUYA_LAYER=off sh "$ROOT/hooks/session-start.sh")" ""
 [ "$(wc -c < "$ROOT/layer.md")" -le 800 ] && ok || bad "layer.md over 800 chars"
 
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"

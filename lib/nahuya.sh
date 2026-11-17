@@ -15,10 +15,7 @@ nh_tmp() { mktemp "${TMPDIR:-/tmp}/nahuya.XXXXXX"; }
 nh_default() {
   case $1 in
     gate) echo off ;;
-    layer) echo on ;;
     threshold) echo 500 ;;
-    shard_lines) echo 3000 ;;
-    max_agents) echo 10 ;;
     depth) echo auto ;;
     max_rounds) echo 3 ;;
     passes) echo 1 ;;
@@ -28,7 +25,7 @@ nh_default() {
   esac
 }
 
-NH_KEYS="gate threshold max_rounds passes reviewer_model fix_mode layer shard_lines max_agents depth"
+NH_KEYS="gate threshold max_rounds passes reviewer_model fix_mode depth"
 
 # Canonical key from what a user types: max-rounds, MAX_ROUNDS, model, fix-mode.
 nh_key() {
@@ -42,9 +39,9 @@ nh_key() {
 nh_norm() {
   _v=$(printf '%s' "$2" | tr 'A-Z' 'a-z')
   case $1 in
-    gate|layer)
+    gate)
       case $_v in on|true|yes|1) echo on ;; off|false|no|0) echo off ;; *) return 1 ;; esac ;;
-    threshold|max_rounds|passes|shard_lines|max_agents)
+    threshold|max_rounds|passes)
       case $_v in ''|*[!0-9]*) return 1 ;; esac
       [ "$_v" -ge 1 ] 2>/dev/null || return 1
       echo "$_v" ;;
